@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微信视频号控制台</title>
+<link rel="icon" href="/static/ico/brand_logo.png" type="image/png">
+<link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+
+<!-- Loading -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-logo"><img src="/static/ico/brand_logo.png" alt="Logo"></div>
+  <div class="loading-progress-track">
+    <div class="loading-progress-fill" id="loadingProgressFill"></div>
+  </div>
+  <div class="loading-text" id="loadingText">正在初始化...</div>
+</div>
+
+<div class="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <button class="btn-back" id="btnBack" onclick="goBack()" style="display:none;">← 返回</button>
+      <h1 id="pageTitle"><img src="/static/ico/brand_logo.png" class="header-logo" alt="Logo">视频号控制台</h1>
+    </div>
+    <div class="header-right">
+      <a class="header-contact-btn" style="display:none" href="https://docs.qq.com/doc/DRVByZHBGREtJT1pG" target="_blank" rel="noopener noreferrer" title="加入交流群">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+          <polyline points="14,2 14,8 20,8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        <span>加入交流群</span>
+      </a>
+      <button class="btn-settings" onclick="navigateTo('settings')" title="设置">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+      </button>
+      <div class="uptime-label">运行时长</div>
+      <div class="uptime-value" id="txtUptime">--:--:--</div>
+    </div>
+  </header>
+
+  <!-- 状态栏（可折叠抽屉） -->
+  <div class="status-drawer" id="statusDrawer">
+    <button class="status-drawer-toggle" onclick="toggleStatusDrawer()" id="drawerToggle">
+      <div class="drawer-summary">
+        <span class="drawer-dot" id="summaryDot"></span>
+        <span class="drawer-text" id="summaryText">检测中...</span>
+      </div>
+      <svg class="drawer-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M3.5 5.25L7 8.75L10.5 5.25"/>
+      </svg>
+    </button>
+    <div class="status-drawer-body" id="drawerBody">
+      <div class="status-detail">
+        <span class="stat-chip"><span class="stat-label">今日新增</span><span class="stat-num" id="txtTodayCount">0</span></span>
+        <span class="status-sep"></span>
+        <span class="stat-chip"><span class="stat-label">今日已下载</span><span class="stat-num" id="txtTodayDownloaded">0</span></span>
+        <span class="status-sep"></span>
+        <span class="stat-chip"><span class="stat-label">总视频</span><span class="stat-num" id="txtTotalVideos">0</span></span>
+        <span class="spacer"></span>
+        <span class="status-item" id="cellService" data-tooltip="视频号后端服务：负责视频抓取与下载的 Go 进程">
+          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="12" y2="10"/><circle cx="12" cy="16" r="2"/></svg>
+          <span class="dot" id="dotService"></span>
+          <span class="status-text" id="txtService">检测中</span>
+          <button class="btn-service" id="btnService" onclick="toggleService(event)">&#9654; 启动</button>
+        </span>
+        <span class="status-sep"></span>
+        <span class="status-item" id="cellWechat" data-tooltip="微信视频号客户端连接：PC 端微信是否已登录且可被调用">
+          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0111 12c1.4 0 2.5 1.1 3 2.5"/><path d="M5 10a7 7 0 0114 0"/><path d="M2 7a10 10 0 0120 0"/><circle cx="12" cy="17" r="1" fill="currentColor"/></svg>
+          <span class="dot" id="dotWechat"></span>
+          <span class="status-text" id="txtWechat">检测中</span>
+        </span>
+        <span class="status-sep"></span>
+        <span class="status-item" id="cellMonitor" data-tooltip="视频监控：自动轮询已添加作者的新视频并创建下载任务">
+          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span class="dot" id="dotMonitor"></span>
+          <span class="status-text" id="txtMonitor">已停止</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 页面容器 ========== -->
+  <div class="page-container">
+
+    <!-- ========== 主页面：作者网格 ========== -->
+    <div class="page active" id="pageHome">
+      <div class="home-toolbar">
+        <div class="home-toolbar-left">
+          <!-- 搜索容器 -->
+          <div class="home-search-container" id="homeSearchContainer">
+            <div class="home-search-wrapper">
+              <span class="search-icon">&#128269;</span>
+              <input type="text" id="homeSearchInput" class="home-search-input" placeholder="搜索作者..." autocomplete="off" aria-label="搜索作者">
+              <button class="home-search-add-btn" id="homeSearchAddBtn" onclick="openSearchPage()" title="添加作者" aria-label="添加作者">+</button>
+            </div>
+          </div>
+          <div class="filter-tabs">
+            <button class="filter-tab active" data-filter="all" onclick="filterAuthors('all')">全部</button>
+            <button class="filter-tab" data-filter="downloading" onclick="filterAuthors('downloading')">下载中</button>
+            <button class="filter-tab" data-filter="idle" onclick="filterAuthors('idle')">空闲</button>
+          </div>
+          <div class="view-toggle" id="viewToggle">
+            <button class="view-btn" data-view="grid" onclick="switchAuthorView('grid')" title="网格视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>
+            </button>
+            <button class="view-btn" data-view="list" onclick="switchAuthorView('list')" title="列表视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="2" rx="1"/><rect x="1" y="7" width="14" height="2" rx="1"/><rect x="1" y="12" width="14" height="2" rx="1"/></svg>
+            </button>
+          </div>
+        </div>
+        <button class="btn-monitor" id="btnMonitor" onclick="toggleOneClickMonitor()">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 4.5v4l2.5 1.5"/>
+          </svg>
+          <span>一键监控</span>
+        </button>
+      </div>
+
+      <div class="author-grid" id="authorGrid">
+        <!-- 动态填充 -->
+      </div>
+
+    </div>
+
+    <!-- ========== 作者详情页：视频列表 ========== -->
+    <div class="page" id="pageAuthor">
+      <div class="author-header">
+        <div class="author-info-large">
+          <div class="author-avatar-large" id="authorAvatar"></div>
+          <div>
+            <h2 id="authorName">作者名称</h2>
+            <div class="author-stats-row">
+              <span class="stat-item"><span id="authorShortVideo">0</span> 短视频</span>
+              <span class="stat-item"><span id="authorReplay">0</span> 回放</span>
+              <span class="stat-item"><span id="authorDownloaded">0/0</span> 已下载</span>
+            </div>
+            <div class="author-progress-section" id="authorProgressSection">
+              <div class="author-progress-bar-wrapper">
+                <div class="author-progress-bar" id="authorProgressBar">
+                  <div class="author-progress-fill" id="authorProgressFill" style="width: 0%"></div>
+                  <div class="author-progress-shimmer" id="authorProgressShimmer"></div>
+                </div>
+              </div>
+              <div class="author-progress-info">
+                <span class="author-progress-text" id="authorProgressText">已下载 0/0 个短视频 (0%)</span>
+                <span class="author-progress-downloading" id="authorProgressDownloading"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="author-actions">
+          <button class="btn-action" onclick="downloadAllPending()">下载全部待下载</button>
+        </div>
+      </div>
+
+      <div class="video-type-tabs">
+        <button class="video-type-tab active" data-type="short_video" onclick="switchVideoType('short_video')">短视频</button>
+        <button class="video-type-tab" data-type="live_replay" onclick="switchVideoType('live_replay')">直播回放</button>
+      </div>
+
+      <div class="video-toolbar">
+        <div class="video-tabs">
+          <button class="video-tab active" data-tab="all" onclick="filterVideos('all')">全部</button>
+          <button class="video-tab" data-tab="downloading" onclick="filterVideos('downloading')">正在下载</button>
+          <button class="video-tab" data-tab="downloaded" onclick="filterVideos('downloaded')">已下载</button>
+          <button class="video-tab" data-tab="pending" onclick="filterVideos('pending')">未下载</button>
+        </div>
+        <div class="video-toolbar-right">
+          <!-- 日期筛选 -->
+          <div class="date-filter">
+            <button class="date-filter-btn" onclick="toggleDatePanel()" id="dateFilterBtn">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M2 4a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm2 0v2h8V4H4zm0 3v7h8V7H4z"/>
+                <rect x="5" y="9" width="2" height="2" rx="0.5"/>
+                <rect x="9" y="9" width="2" height="2" rx="0.5"/>
+              </svg>
+              <span id="dateFilterLabel">全部日期</span>
+              <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <div class="date-panel" id="datePanel">
+              <div class="date-quick-options">
+                <button class="date-option" data-range="all" onclick="selectDateRange('all')">全部日期</button>
+                <button class="date-option" data-range="today" onclick="selectDateRange('today')">今天</button>
+                <button class="date-option" data-range="7d" onclick="selectDateRange('7d')">最近 7 天</button>
+                <button class="date-option" data-range="30d" onclick="selectDateRange('30d')">最近 30 天</button>
+                <button class="date-option" data-range="month" onclick="selectDateRange('month')">本月</button>
+              </div>
+              <div class="date-divider"></div>
+              <div class="date-custom">
+                <div class="date-custom-label">自定义范围</div>
+                <div class="date-inputs">
+                  <input type="date" id="dateStart" onchange="applyCustomDateRange()">
+                  <span class="date-separator">—</span>
+                  <input type="date" id="dateEnd" onchange="applyCustomDateRange()">
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="video-search">
+            <input type="text" id="videoSearchInput" placeholder="搜索视频..." oninput="searchVideos()">
+          </div>
+          <div class="view-switcher">
+            <button class="view-btn active" data-view="grid" onclick="switchView('grid')" title="网格视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="1" width="6" height="6" rx="1"/>
+                <rect x="9" y="1" width="6" height="6" rx="1"/>
+                <rect x="1" y="9" width="6" height="6" rx="1"/>
+                <rect x="9" y="9" width="6" height="6" rx="1"/>
+              </svg>
+            </button>
+            <button class="view-btn" data-view="list" onclick="switchView('list')" title="列表视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="2" width="14" height="3" rx="1"/>
+                <rect x="1" y="6.5" width="14" height="3" rx="1"/>
+                <rect x="1" y="11" width="14" height="3" rx="1"/>
+              </svg>
+            </button>
+            <button class="view-btn" data-view="compact" onclick="switchView('compact')" title="紧凑视图">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <rect x="1" y="1" width="14" height="2" rx="0.5"/>
+                <rect x="1" y="4" width="14" height="2" rx="0.5"/>
+                <rect x="1" y="7" width="14" height="2" rx="0.5"/>
+                <rect x="1" y="10" width="14" height="2" rx="0.5"/>
+                <rect x="1" y="13" width="14" height="2" rx="0.5"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="video-list" id="videoList">
+        <!-- 动态填充 -->
+      </div>
+
+      <div class="selection-bar" id="selectionBar">
+        <div class="selection-info">已选 <strong id="selectedCount">0</strong> 个视频</div>
+        <div class="selection-actions">
+          <button class="btn-secondary" onclick="selectAllVideos()">全选</button>
+          <button class="btn-secondary" onclick="clearSelection()">清空</button>
+          <button class="btn-primary" onclick="downloadSelected()">下载</button>
+          <button class="btn-danger" onclick="deleteSelected()">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 搜索页：添加作者 ========== -->
+    <div class="page" id="pageSearch">
+      <div class="search-page-content">
+        <div class="search-input-large">
+          <input type="text" id="searchInput" placeholder="输入作者名称搜索..." onkeydown="if(event.key==='Enter')searchAuthors()">
+          <button class="btn-search-large" onclick="searchAuthors()">搜索</button>
+        </div>
+        <div class="search-results" id="searchResults">
+          <!-- 默认显示CSV导入卡片 -->
+          <div class="import-cards" id="importCards">
+            <div class="import-card csv-card" onclick="showCSVImport()">
+              <div class="import-card-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14,2 14,8 20,8"/>
+                  <line x1="12" y1="12" x2="12" y2="18"/>
+                  <polyline points="9,15 12,12 15,15"/>
+                </svg>
+              </div>
+              <div class="import-card-title">CSV 批量导入</div>
+              <div class="import-card-desc">上传标准 CSV 文件，批量添加监控作者</div>
+            </div>
+                        <div class="import-card excel-card" onclick="showExcelImport()">
+              <div class="import-card-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14,2 14,8 20,8"/>
+                  <rect x="8" y="12" width="8" height="6" rx="1"/>
+                  <line x1="10" y1="15" x2="14" y2="15"/>
+                </svg>
+              </div>
+              <div class="import-card-title">Excel 批量导入</div>
+              <div class="import-card-desc">上传 Excel 文件，批量添加监控作者</div>
+            </div>
+            <div class="import-card tencent-doc-card" id="tencentDocImportCard" onclick="handleTencentDocCardClick()">
+              <!-- 监控状态指示器 -->
+              <div class="monitoring-indicator" id="monitoringIndicator" style="display: none;">
+                <span class="monitoring-dot"></span>
+                <span class="monitoring-text">监控中</span>
+              </div>
+              <div class="import-card-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <line x1="7" y1="8" x2="17" y2="8"/>
+                  <line x1="7" y1="12" x2="17" y2="12"/>
+                  <line x1="7" y1="16" x2="13" y2="16"/>
+                </svg>
+              </div>
+              <div class="import-card-title">腾讯文档</div>
+              <div class="import-card-desc">从腾讯文档在线表格导入作者列表</div>
+              <!-- 停止监控按钮 - 卡片内部 -->
+              <button class="monitoring-stop-btn" id="monitoringStopBtn" style="display: none;" onclick="event.stopPropagation(); toggleDocSync();">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="2"/>
+                </svg>
+                停止监控
+              </button>
+            </div>
+          </div>
+          <!-- CSV导入面板 -->
+          <div class="csv-import-panel" id="csvImportPanel" style="display: none;">
+            <div class="csv-panel-header">
+              <button class="btn-back-panel" onclick="hideCSVImport()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                <span>返回</span>
+              </button>
+              <h3>CSV 批量导入</h3>
+            </div>
+            <div class="csv-format-hint">
+              <div class="hint-title">导入规则</div>
+              <div class="hint-content">
+                <code>作者名称,同步方式,同步值</code>
+                <ul>
+                  <li>仅支持上传 <strong>.csv</strong> 文件</li>
+                  <li>无表头，每行必须且只能有 <strong>3 列</strong></li>
+                  <li>同步方式只允许 <strong>日期</strong> 或 <strong>页数</strong></li>
+                  <li>日期格式为 <strong>YYYY-MM-DD</strong>，页数范围为 <strong>1-50</strong></li>
+                </ul>
+                <div class="hint-example">
+                  <div>示例：</div>
+                  <pre>天天象棋,日期,2026-04-01
+老武侃棋,页数,5</pre>
+                </div>
+              </div>
+            </div>
+
+            <input type="file" id="csvFileInput" accept=".csv,text/csv" style="display: none;" onchange="handleCSVFileChange(event)">
+
+            <div class="csv-upload-zone" id="csvUploadZone" onclick="triggerCSVFileSelect()">
+              <div class="csv-upload-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M12 16V8"/>
+                  <path d="M8.5 11.5L12 8l3.5 3.5"/>
+                  <path d="M20 16.5v1a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-1"/>
+                </svg>
+              </div>
+              <div class="csv-upload-title" id="csvUploadTitle">选择要导入的 CSV 文件</div>
+              <div class="csv-upload-desc" id="csvUploadDesc">点击选择文件，按模板格式批量导入作者</div>
+            </div>
+
+            <div class="csv-file-card" id="csvFileCard" style="display: none;">
+              <div class="csv-file-info">
+                <div class="csv-file-name" id="csvFileName">未选择文件</div>
+                <div class="csv-file-meta" id="csvFileMeta">请选择 .csv 文件</div>
+              </div>
+              <button class="btn-file-clear" onclick="clearSelectedCSV(event)">重新选择</button>
+            </div>
+
+            <div class="csv-actions">
+              <div class="csv-secondary-actions">
+                <button class="btn-secondary" onclick="downloadCSVTemplate()">下载模板</button>
+              </div>
+              <button class="btn-primary" id="btnImportCSV" onclick="importCSVAuthors()">开始导入</button>
+            </div>
+
+          </div>
+                    <!-- Excel导入面板 -->
+          <div class="csv-import-panel" id="excelImportPanel" style="display: none;">
+            <div class="csv-panel-header">
+              <button class="btn-back-panel" onclick="hideExcelImport()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                <span>返回</span>
+              </button>
+              <h3>Excel 批量导入</h3>
+            </div>
+            <div class="csv-format-hint">
+              <div class="hint-title">导入规则</div>
+              <div class="hint-content">
+                <code>author_name, search_type, search_value</code>
+                <ul>
+                  <li>仅支持上传 <strong>.xlsx</strong> 或 <strong>.xls</strong> 文件</li>
+                  <li>第一行为表头：<strong>author_name, search_type, search_value</strong></li>
+                  <li>search_type 只允许 <strong>pages</strong>、<strong>date</strong>、<strong>all</strong></li>
+                  <li>只能有 1 个工作表</li>
+                </ul>
+                <div class="hint-example">
+                  <div>示例：</div>
+                  <pre>author_name,search_type,search_value
+孤独,pages,1
+象棋小乔,date,2025-01-01</pre>
+                </div>
+              </div>
+            </div>
+
+            <input type="file" id="excelFileInput" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display: none;" onchange="handleExcelFileChange(event)">
+
+            <div class="csv-upload-zone" id="excelUploadZone" onclick="triggerExcelFileSelect()">
+              <div class="csv-upload-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <path d="M12 16V8"/>
+                  <path d="M8.5 11.5L12 8l3.5 3.5"/>
+                  <path d="M20 16.5v1a2.5 2.5 0 01-2.5 2.5h-11A2.5 2.5 0 014 17.5v-1"/>
+                </svg>
+              </div>
+              <div class="csv-upload-title">选择要导入的 Excel 文件</div>
+              <div class="csv-upload-desc">点击选择文件，按模板格式批量导入作者</div>
+            </div>
+
+            <div class="csv-file-card" id="excelFileCard" style="display: none;">
+              <div class="csv-file-info">
+                <div class="csv-file-name" id="excelFileName">未选择文件</div>
+                <div class="csv-file-meta" id="excelInfo">请选择 .xlsx 文件</div>
+              </div>
+              <button class="btn-file-clear" onclick="resetExcelImportState()">重新选择</button>
+            </div>
+
+            <div class="csv-actions">
+              <div class="csv-secondary-actions">
+                <button class="btn-secondary" onclick="downloadExcelTemplate()">下载模板</button>
+              </div>
+              <button class="btn-primary" id="btnImportExcel" onclick="importExcelAuthors()" disabled>开始导入</button>
+            </div>
+          </div>
+          <!-- 腾讯文档导入面板 -->
+          <div class="tencent-doc-import-panel" id="tencentDocImportPanel" style="display: none;">
+            <div class="csv-panel-header">
+              <button class="btn-back-panel" onclick="hideTencentDocImport()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                <span>返回</span>
+              </button>
+              <h3>腾讯文档导入</h3>
+            </div>
+            <div class="csv-format-hint">
+              <div class="hint-title">使用说明</div>
+              <div class="hint-content">
+                <ul>
+                  <li>在腾讯文档中创建在线表格，按模板格式填写作者数据</li>
+                  <li>表头必须为 <strong>author_name, search_type, search_value</strong></li>
+                  <li>只能有 <strong>1 个工作表</strong>，search_type 支持 <strong>pages</strong>、<strong>date</strong>、<strong>all</strong></li>
+                  <li>三件套凭证从 <a href="https://docs.qq.com/open/developers" target="_blank" rel="noopener noreferrer" class="hint-link">腾讯文档开放平台</a> 获取，需属于同一应用</li>
+                </ul>
+              </div>
+            </div>
+            <div class="tencent-doc-form">
+              <div class="form-group">
+                <label>文档 URL</label>
+                <input type="text" id="tencentDocUrl" placeholder="https://docs.qq.com/sheet/xxx?tab=xxx">
+              </div>
+              <div class="form-section-title">开放平台凭证</div>
+              <div class="form-group-credentials">
+                <div class="form-group">
+                  <label>Client ID</label>
+                  <input type="text" id="tencentClientId" placeholder="开放平台应用的 Client ID">
+                </div>
+                <div class="form-group">
+                  <label>Access Token</label>
+                  <input type="text" id="tencentAccessToken" placeholder="开放平台应用的 Access Token">
+                </div>
+                <div class="form-group">
+                  <label>Open ID</label>
+                  <input type="text" id="tencentOpenId" placeholder="开放平台应用的 Open ID">
+                </div>
+              </div>
+            </div>
+            <div class="csv-actions">
+              <div class="csv-secondary-actions">
+                <button class="btn-secondary" id="btnStartDocSyncMonitor" onclick="startDocSyncFromPanel()">实时监控</button>
+              </div>
+              <button class="btn-primary" id="btnImportTencentDoc" onclick="importFromTencentDoc()">开始导入</button>
+            </div>
+          </div>
+          <!-- 导入进度弹窗 -->
+          <div class="import-modal-overlay" id="importModalOverlay">
+            <div class="import-modal" id="importModal">
+              <!-- 进度视图 -->
+              <div class="import-modal-progress" id="importModalProgress">
+                <div class="import-modal-header">
+                  <h3 id="importModalTitle">正在导入</h3>
+                  <button class="import-modal-close" id="importModalClose" onclick="closeImportModal()">&times;</button>
+                </div>
+
+                <!-- 阶段指示器 -->
+                <div class="import-steps" id="importSteps">
+                  <div class="import-step active" data-step="parse">
+                    <div class="step-dot"></div>
+                    <span>解析</span>
+                  </div>
+                  <div class="import-step" data-step="validate">
+                    <div class="step-dot"></div>
+                    <span>校验</span>
+                  </div>
+                  <div class="import-step" data-step="import">
+                    <div class="step-dot"></div>
+                    <span>导入</span>
+                  </div>
+                  <div class="import-step" data-step="save">
+                    <div class="step-dot"></div>
+                    <span>保存</span>
+                  </div>
+                </div>
+
+                <!-- 进度条 -->
+                <div class="import-progress-bar">
+                  <div class="import-progress-fill" id="importProgressFill"></div>
+                </div>
+                <div class="import-progress-info">
+                  <span class="import-progress-percent" id="importProgressPercent">0%</span>
+                  <span class="import-progress-label" id="importProgressLabel">准备中...</span>
+                </div>
+
+                <!-- 实时计数 -->
+                <div class="import-counters" id="importCounters">
+                  <div class="import-counter">
+                    <span class="counter-value success" id="importSuccessCount">0</span>
+                    <span class="counter-label">成功</span>
+                  </div>
+                  <div class="import-counter">
+                    <span class="counter-value fail" id="importFailCount">0</span>
+                    <span class="counter-label">失败</span>
+                  </div>
+                  <div class="import-counter">
+                    <span class="counter-value total" id="importTotalCount">0</span>
+                    <span class="counter-label">总计</span>
+                  </div>
+                </div>
+
+                <!-- 当前处理项 -->
+                <div class="import-current" id="importCurrent" style="display:none;">
+                  <span class="current-label">当前：</span>
+                  <span class="current-name" id="importCurrentName"></span>
+                </div>
+
+                <!-- 取消按钮 -->
+                <div class="import-modal-actions">
+                  <button class="btn-import-cancel" id="btnImportCancel" onclick="cancelImport()">取消导入</button>
+                </div>
+              </div>
+
+              <!-- 结果视图 -->
+              <div class="import-modal-result" id="importModalResult" style="display:none;">
+                <div class="import-modal-header">
+                  <h3>导入完成</h3>
+                  <button class="import-modal-close" onclick="closeImportModal()">&times;</button>
+                </div>
+
+                <div class="import-result-cards">
+                  <div class="result-card success-card">
+                    <div class="result-card-icon">&#10003;</div>
+                    <div class="result-card-value" id="resultSuccessCount">0</div>
+                    <div class="result-card-label">成功导入</div>
+                  </div>
+                  <div class="result-card fail-card">
+                    <div class="result-card-icon">&#10007;</div>
+                    <div class="result-card-value" id="resultFailCount">0</div>
+                    <div class="result-card-label">导入失败</div>
+                  </div>
+                  <div class="result-card total-card">
+                    <div class="result-card-icon">&#9776;</div>
+                    <div class="result-card-value" id="resultTotalCount">0</div>
+                    <div class="result-card-label">总计</div>
+                  </div>
+                </div>
+
+                <!-- 失败详情 -->
+                <div class="import-fail-details" id="importFailDetails" style="display:none;">
+                  <div class="fail-details-title">失败详情</div>
+                  <div class="fail-details-list" id="importFailList"></div>
+                </div>
+
+                <div class="import-modal-actions">
+                  <button class="btn-primary" onclick="closeImportModal()">确定</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 搜索结果区域 -->
+          <div class="search-results-list" id="searchResultsList" style="display: none;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ========== 设置页 ========== -->
+    <div class="page" id="pageSettings">
+      <div class="settings-content">
+        <div class="settings-sections">
+
+          <!-- 下载设置 -->
+          <div class="settings-section">
+            <div class="settings-section-header">
+              <div class="settings-section-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                  <polyline points="7,10 12,15 17,10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </div>
+              <div>
+                <div class="settings-section-title">下载设置</div>
+                <div class="settings-section-desc">视频保存目录</div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-field settings-field--full">
+                <div class="settings-field-info">
+                  <div class="settings-field-label">下载目录</div>
+                  <div class="settings-field-desc">视频保存的本地目录（相对路径基于应用根目录，也可用绝对路径）</div>
+                </div>
+                <div class="settings-field-control">
+                  <div class="settings-input-group">
+                    <input type="text" class="settings-input" id="settingDownloadDir" value="下载" data-key="wx_download_dir" placeholder="相对路径或绝对路径">
+                    <button class="settings-browse-btn" onclick="selectDownloadFolder()" title="选择文件夹">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                      </svg>
+                      <span>浏览</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 监控设置 -->
+          <div class="settings-section">
+            <div class="settings-section-header">
+              <div class="settings-section-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="6.5" fill="none"/>
+                  <path d="M12 8.5v4l2.5 1.5"/>
+                  <path d="M1 12a11 11 0 0122 0" fill="none"/>
+                  <path d="M1 12a11 11 0 0022 0" fill="none"/>
+                </svg>
+              </div>
+              <div>
+                <div class="settings-section-title">监控设置</div>
+                <div class="settings-section-desc">服务状态轮询间隔</div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-field">
+                <div class="settings-field-info">
+                  <div class="settings-field-label">状态轮询间隔</div>
+                  <div class="settings-field-desc">前端轮询后端服务状态的间隔（秒）</div>
+                </div>
+                <div class="settings-field-control">
+                  <input type="number" class="settings-input settings-input-sm" id="settingStatusInterval" value="5" min="1" max="60" data-key="wx_status_interval">
+                </div>
+              </div>
+              <div class="settings-field">
+                <div class="settings-field-info">
+                  <div class="settings-field-label">最大并发下载数</div>
+                  <div class="settings-field-desc">一键监控同时下载的最大任务数（1-20）</div>
+                </div>
+                <div class="settings-field-control">
+                  <input type="number" class="settings-input settings-input-sm" id="settingMaxConcurrent" value="5" min="1" max="20" data-key="max_concurrent">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 腾讯文档监控设置 -->
+          <div class="settings-section">
+            <div class="settings-section-header">
+              <div class="settings-section-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <polyline points="14,2 14,8 20,8"/>
+                  <line x1="16" y1="13" x2="8" y2="13"/>
+                  <line x1="16" y1="17" x2="8" y2="17"/>
+                  <polyline points="10,9 9,9 8,9"/>
+                </svg>
+              </div>
+              <div>
+                <div class="settings-section-title">腾讯文档监控</div>
+                <div class="settings-section-desc">配置文档轮询间隔（启动/停止在导入面板操作）</div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <!-- 轮询间隔 -->
+              <div class="settings-field">
+                <div class="settings-field-info">
+                  <div class="settings-field-label">轮询间隔（分钟）</div>
+                  <div class="settings-field-desc">多久检查一次文档变化（5-120分钟）</div>
+                </div>
+                <div class="settings-field-control">
+                  <input type="number" class="settings-input settings-input-sm" id="settingDocSyncInterval" value="60" min="5" max="120">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 高级设置 -->
+          <div class="settings-section">
+            <div class="settings-section-header">
+              <div class="settings-section-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                </svg>
+              </div>
+              <div>
+                <div class="settings-section-title">高级设置</div>
+                <div class="settings-section-desc">日志级别</div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="settings-field">
+                <div class="settings-field-info">
+                  <div class="settings-field-label">日志级别</div>
+                  <div class="settings-field-desc">应用运行日志的输出级别</div>
+                </div>
+                <div class="settings-field-control">
+                  <select class="settings-select" id="settingLogLevel" data-key="log_level">
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO" selected>INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 加入交流群 -->
+          <div class="settings-section" style="display:none">
+            <div class="settings-section-header">
+              <div class="settings-section-icon" style="background: rgba(16, 124, 16, 0.1); color: var(--success);">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+                  <path d="M16 3.13a4 4 0 010 7.75"/>
+                </svg>
+              </div>
+              <div>
+                <div class="settings-section-title">加入交流群</div>
+                <div class="settings-section-desc">点击链接加入群聊，获取更新与支持</div>
+              </div>
+            </div>
+            <div class="settings-card">
+              <div class="contact-dev-content">
+                <a class="contact-dev-link" href="https://docs.qq.com/doc/DRVByZHBGREtJT1pG" target="_blank" rel="noopener noreferrer">
+                  <svg class="contact-dev-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 010 7.75"/>
+                  </svg>
+                  <div class="contact-dev-link-text">
+                    <div class="contact-dev-title">加入交流群</div>
+                    <div class="contact-dev-subtitle">点击打开文档 · 新版本推送 · 问题反馈 · 功能定制</div>
+                  </div>
+                  <svg class="contact-dev-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 18l6-6-6-6"/>
+                  </svg>
+                </a>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 底部操作栏 -->
+        <div class="settings-footer">
+          <div class="settings-footer-info">修改后点击保存生效，部分设置需重启服务</div>
+          <div class="settings-footer-actions">
+            <button class="btn-secondary" onclick="resetSettings()">恢复默认</button>
+            <button class="btn-primary" id="btnSaveSettings" onclick="saveSettings()">保存设置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 日志面板 -->
+  <div class="log-panel collapsed" id="logPanel">
+    <div class="log-header" onclick="toggleLogPanel()">
+      <span class="log-title">运行日志</span>
+      <span class="log-badge" id="logBadge">0 条</span>
+      <span class="log-toggle">▼</span>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-empty">等待启动...</div>
+    </div>
+  </div>
+
+  <!-- 全屏交流群遮罩 -->
+  <div class="qr-overlay" id="qrOverlay" style="display:none" onclick="hideQROverlay(event)">
+    <div class="qr-overlay-card" onclick="event.stopPropagation()">
+      <button class="qr-overlay-close" onclick="hideQROverlay()">&times;</button>
+      <a class="qr-overlay-link" href="https://docs.qq.com/doc/DRVByZHBGREtJT1pG" target="_blank" rel="noopener noreferrer">
+        <svg class="qr-overlay-icon" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 00-3-3.87"/>
+          <path d="M16 3.13a4 4 0 010 7.75"/>
+        </svg>
+        <div class="qr-overlay-title">加入交流群</div>
+        <div class="qr-overlay-desc">点击打开文档 · 新版本推送 · 问题反馈 · 功能定制</div>
+      </a>
+    </div>
+  </div>
+
+</div>
+
+<!-- State 层 -->
+<script src="/static/js/api/state/namespace.js"></script>
+<script src="/static/js/api/state/tables/catalog.js"></script>
+<script src="/static/js/api/state/tables/authors.js"></script>
+<script src="/static/js/api/state/tables/videos.js"></script>
+<script src="/static/js/api/state/tables/tasks.js"></script>
+<script src="/static/js/api/state/db.js"></script>
+<script src="/static/js/api/state/ui.js"></script>
+<script src="/static/js/api/state/service.js"></script>
+<!-- 响应式渲染器 -->
+<script src="/static/js/component/reactiveRenderer.js"></script>
+<script src="/js/component/authorProgress.js"></script>
+<!-- 桥接层 -->
+<script src="/static/js/stateBridge.js"></script>
+<!-- 工具 -->
+<script src="/static/js/utils/toast.js"></script>
+<script src="/static/js/utils/api.js"></script>
+<script src="/static/js/utils/date.js"></script>
+<script src="/static/js/utils/image.js"></script>
+<script src="/static/js/component/utils.js"></script>
+<script src="/static/js/datahandle/authorOps.js"></script>
+<script src="/static/js/datahandle/authorDetail.js"></script>
+<script src="/static/js/datahandle/videoOps.js"></script>
+<script src="/static/js/component/navigate.js"></script>
+<script src="/static/js/component/status.js"></script>
+<script src="/static/js/component/authorGridRender.js"></script>
+<script src="/static/js/component/homeSearchFilter.js"></script>
+<script src="/static/js/component/videoListRender.js"></script>
+<script src="/static/js/component/pagination.js"></script>
+<script src="/static/js/component/view.js"></script>
+<script src="/static/js/component/dateFilter.js"></script>
+<script src="/static/js/component/videoSelect.js"></script>
+<script src="/static/js/component/dialog.js"></script>
+<script src="/static/js/component/importModal.js"></script>
+<script src="/static/js/api/monitor/doc_sync_monitor.js"></script>
+<script src="/static/js/component/search.js"></script>
+<script src="/static/js/component/authorDialog.js"></script>
+<script src="/static/js/component/loading.js"></script>
+<script src="/static/js/component/uptime.js"></script>
+<script src="/static/js/component/log.js"></script>
+<script src="/static/js/component/authorGrid.js"></script>
+<script src="/static/js/component/monitorButton.js"></script>
+<script src="/static/js/component/settings.js"></script>
+<script src="/static/js/component/splash.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
