@@ -1,4 +1,5 @@
 """测试 resume_download_task 中 URL 过期刷新逻辑"""
+import threading
 import pytest
 from unittest.mock import patch, MagicMock
 
@@ -196,3 +197,61 @@ class TestResumeUrlRefresh:
             assert call_kwargs.kwargs["url"] == refreshed_url
             # 确保不是旧 URL
             assert call_kwargs.kwargs["url"] != sample_task.url
+
+
+class TestResumeLock:
+    """测试 resume 防重入锁"""
+
+    def test_resume_lock_exists(self):
+        """task.py 模块应包含 _resume_lock"""
+        from core.service import task as task_module
+        assert hasattr(task_module, '_resume_lock')
+        assert isinstance(task_module._resume_lock, type(threading.Lock()))
+
+    def test_resume_pending_tasks_skips_when_locked(self, db):
+        """resume_pending_tasks 在锁被持有时应跳过"""
+        from core.service import task as task_module
+        from core.service.task import resume_pending_tasks
+
+        acquired = task_module._resume_lock.acquire(blocking=False)
+        assert acquired is True
+
+        try:
+            result = resume_pending_tasks()
+            assert result.get("skipped") == 1
+        finally:
+            task_module._resume_lock.release()
+
+    def test_resume_all_running_tasks_skips_when_locked(self, db):
+        """resume_all_running_tasks 在锁被持有时应跳过"""
+        from core.service import task as task_module
+        from core.service.task import resume_all_running_tasks
+
+        acquired = task_module._resume_lock.acquire(blocking=False)
+        assert acquired is True
+
+        try:
+            result = resume_all_running_tasks()
+            assert result.get("skipped") == 1
+        finally:
+            task_module._resume_lock.release()
+
+
+class TestStartServiceClearsGopeedDb:
+    """测试 start_service 启动前删除 gopeed.db"""
+
+    def test_start_service_calls_clear_go_tasks_safe(self):
+        """start_service 应在启动 Go 前调用 _clear_go_tasks_safe"""
+        with patch("core.api.app._clear_go_tasks_safe") as mock_clear, \
+             patch("core.utils.base_servier.WechatVideoService") as mock_svc_cls:
+            mock_svc = MagicMock()
+            mock_svc.is_running.return_value = False
+            mock_svc.is_process_running.return_value = True  # 跳过 exe 存在检查
+            mock_svc.start.return_value = True
+            mock_svc_cls.return_value = mock_svc
+
+            from core.api.routers.base_service import start_service
+            result = start_service()
+
+            assert result["code"] == 0
+            mock_clear.assert_called_once()
