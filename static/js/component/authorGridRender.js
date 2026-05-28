@@ -289,7 +289,6 @@ function openAuthorDetail(username, nickname) {
   // 从 _allAuthors 获取完整的作者信息（包括 id）
   const author = _allAuthors.find(a => a.username === username);
   _currentAuthor = author ? { ...author, username, nickname } : { username, nickname };
-  console.log(`[openAuthorDetail] _currentAuthor=`, _currentAuthor);
   State.ui.setCurrentAuthor(_currentAuthor);
   document.querySelectorAll('.video-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.tab === 'all');

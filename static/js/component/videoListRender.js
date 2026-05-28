@@ -9,20 +9,16 @@ var _currentVideoType = 'short_video';
 
 // 切换视频类型（一级 Tab）
 async function switchVideoType(type) {
-  console.log(`[switchVideoType] 开始切换，type=${type}, 当前类型=${_currentVideoType}`);
 
   if (_currentVideoType === type) {
-    console.log(`[switchVideoType] 类型相同，跳过切换`);
     return;
   }
   _currentVideoType = type;
-  console.log(`[switchVideoType] 已更新 _currentVideoType=${_currentVideoType}`);
 
   // 更新 Tab 样式
   document.querySelectorAll('.video-type-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.type === type);
   });
-  console.log(`[switchVideoType] 已更新 Tab 样式`);
 
   // 重置分页、清空选中
   _currentPageNum = 1;
@@ -41,16 +37,12 @@ async function switchVideoType(type) {
   }
 
   // 重新从后端加载对应类型的视频列表
-  console.log(`[switchVideoType] _currentAuthor=`, _currentAuthor);
   if (_currentAuthor?.id) {
     try {
       const url = `/api/video/author/${_currentAuthor.id}?video_type=${type}`;
-      console.log(`[switchVideoType] 请求 URL: ${url}`);
 
       const res = await fetch(url);
       const data = await res.json();
-      console.log(`[switchVideoType] API 响应:`, data);
-      console.log(`[switchVideoType] data.code=${data.code}, data.data 类型=${Array.isArray(data.data) ? '数组' : typeof data.data}, 长度=${data.data?.length || 0}`);
 
       if (data.code === 0 && Array.isArray(data.data)) {
         const username = _currentAuthor.username;
@@ -62,13 +54,10 @@ async function switchVideoType(type) {
         });
         // 重新渲染
         const videos = Object.values(_authorVideosData[username].videos);
-        console.log(`[switchVideoType] 准备渲染 ${videos.length} 个视频，类型=${type}`);
-        console.log(`[switchVideoType] 视频列表:`, videos.map(v => ({ id: v.video_id, title: v.title?.slice(0,20), video_type: v.video_type })));
         const currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
         renderVideoList(videos, currentFilter);
 
         // 更新统计
-        console.log(`[switchVideoType] stats=`, data.stats);
         updateAuthorStatsByType(data.stats);
         // 更新全局进度条
         if (typeof updateAuthorGlobalProgress === 'function') {
@@ -87,7 +76,6 @@ async function switchVideoType(type) {
 
 // 更新作者头部统计（按类型）
 function updateAuthorStatsByType(data) {
-  console.log(`[updateAuthorStatsByType] 接收数据:`, data);
   const shortVideoEl = document.getElementById("authorShortVideo");
   const replayEl = document.getElementById("authorReplay");
   const downloadedEl = document.getElementById("authorDownloaded");
@@ -104,12 +92,9 @@ function updateAuthorStatsByType(data) {
     : (data.short_video_count || 0);
   if (downloadedEl) downloadedEl.textContent = downloadedCount + '/' + totalForType;
 
-  console.log(`[updateAuthorStatsByType] 更新后: 短视频=${data.short_video_count}, 回放=${data.replay_count}, 已下载=${downloadedCount}/${totalForType}`);
 }
 
 function renderVideoList(videos, filter = 'all') {
-  console.log(`[renderVideoList] 入参: videos.length=${videos.length}, filter=${filter}`);
-  console.log(`[renderVideoList] _currentVideoType=${_currentVideoType}`);
 
   const el = document.getElementById("videoList");
 
@@ -131,7 +116,6 @@ function renderVideoList(videos, filter = 'all') {
   if (_currentVideoType) {
     const beforeCount = filtered.length;
     filtered = filtered.filter(v => (v.video_type || 'short_video') === _currentVideoType);
-    console.log(`[renderVideoList] video_type 过滤: ${beforeCount} -> ${filtered.length}, 类型=${_currentVideoType}`);
   }
 
   // 二级过滤：按下载状态
@@ -139,7 +123,6 @@ function renderVideoList(videos, filter = 'all') {
   if (filter === 'downloading') {
     const beforeCount2 = filtered.length;
     filtered = filtered.filter(v => downloadingIds.has(v.id) && !v.downloaded);
-    console.log(`[renderVideoList] downloading 过滤: ${beforeCount2} -> ${filtered.length}, downloadingIds=${downloadingIds.size}`);
   } else if (filter === 'downloaded') {
     filtered = filtered.filter(v => v.downloaded);
   } else if (filter === 'pending') {
@@ -508,7 +491,6 @@ function updateSingleVideoProgress(videoId, task) {
   var speed = hasSpeed ? formatFileSize(task.speed) + '/s' : '--/s';
 
   if (badge.classList.contains('downloading')) {
-    console.log('[SSE][渲染层] 快速路径: id=%s, %s%%, %s/%s, %s', videoId, pct, dlStr, szStr, hasSpeed ? speed : '--');
     var pctEl = badge.querySelector('.progress-percent');
     if (pctEl) pctEl.textContent = pct + '%';
     var fill = badge.querySelector('.progress-fill');
@@ -523,7 +505,6 @@ function updateSingleVideoProgress(videoId, task) {
       speedEl.classList.toggle('muted', !hasSpeed);
     }
   } else {
-    console.log('[SSE][渲染层] 慢速路径(切换状态): id=%s, %s%%, %s/%s', videoId, pct, dlStr, szStr);
 
     var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
     if (currentFilter === 'pending') {
@@ -557,7 +538,6 @@ function updateSingleVideoCompleted(videoId, video) {
   var badge = row.querySelector('.video-status-badge');
   if (!badge) return;
 
-  console.log('[SSE][渲染层][完成] 切换为已下载: id=%s, path=%s', videoId, video.download_path || '');
 
   var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
   // 完成的视频不属于"正在下载"和"待下载"筛选视图，需移除并重新渲染
@@ -595,7 +575,6 @@ function updateSingleVideoError(videoId) {
   var badge = row.querySelector('.video-status-badge');
   if (!badge) return;
 
-  console.log('[SSE][渲染层][错误] 切换为错误状态: id=%s', videoId);
 
   var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
   // 失败的视频不属于"正在下载"和"已下载"筛选视图，需移除并重新渲染

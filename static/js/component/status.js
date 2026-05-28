@@ -12,19 +12,13 @@ let _lastStatus = {
 function updateStatusFromPoll(status) {
   if (!status) return;
 
-  // 检查是否有任何值变化（只检查传入的字段）
-  const serviceChanged = status.service_online !== undefined && status.service_online !== _lastStatus.service_online;
-  const wechatChanged = status.wechat_connected !== undefined && status.wechat_connected !== _lastStatus.wechat_connected;
-  const monitorChanged = status.monitor_running !== undefined && status.monitor_running !== _lastStatus.monitor_running;
-  const todayCountChanged = status.today_count !== undefined && status.today_count !== _lastStatus.today_count;
-  const todayDownloadedChanged = status.today_downloaded !== undefined && status.today_downloaded !== _lastStatus.today_downloaded;
-  const totalChanged = status.total_videos !== undefined && status.total_videos !== _lastStatus.total_videos;
-
-  // 如果没有任何变化，跳过渲染
-  if (!serviceChanged && !wechatChanged && !monitorChanged &&
-      !todayCountChanged && !todayDownloadedChanged && !totalChanged) {
-    return;
-  }
+  // 记录变化前的值（必须在更新 _lastStatus 之前读取）
+  var prevServiceOnline = _lastStatus.service_online;
+  var prevWechatConnected = _lastStatus.wechat_connected;
+  var prevMonitorRunning = _lastStatus.monitor_running;
+  var prevTodayCount = _lastStatus.today_count;
+  var prevTodayDownloaded = _lastStatus.today_downloaded;
+  var prevTotalVideos = _lastStatus.total_videos;
 
   // 更新缓存（只更新传入的字段）
   if (status.service_online !== undefined) _lastStatus.service_online = status.service_online;
@@ -33,6 +27,20 @@ function updateStatusFromPoll(status) {
   if (status.today_count !== undefined) _lastStatus.today_count = status.today_count;
   if (status.today_downloaded !== undefined) _lastStatus.today_downloaded = status.today_downloaded;
   if (status.total_videos !== undefined) _lastStatus.total_videos = status.total_videos;
+
+  // 计算是否有变化（基于更新前的值）
+  var serviceChanged = status.service_online !== undefined && status.service_online !== prevServiceOnline;
+  var wechatChanged = status.wechat_connected !== undefined && status.wechat_connected !== prevWechatConnected;
+  var monitorChanged = status.monitor_running !== undefined && status.monitor_running !== prevMonitorRunning;
+  var todayCountChanged = status.today_count !== undefined && status.today_count !== prevTodayCount;
+  var todayDownloadedChanged = status.today_downloaded !== undefined && status.today_downloaded !== prevTodayDownloaded;
+  var totalChanged = status.total_videos !== undefined && status.total_videos !== prevTotalVideos;
+
+  // 如果没有任何变化，跳过渲染
+  if (!serviceChanged && !wechatChanged && !monitorChanged &&
+      !todayCountChanged && !todayDownloadedChanged && !totalChanged) {
+    return;
+  }
 
   // 更新全局状态（用于其他逻辑判断）
   if (status.service_online !== undefined) {
@@ -98,6 +106,14 @@ function updateStatusFromPoll(status) {
     }
     if (dotWechat) {
       dotWechat.className = status.wechat_connected ? 'dot green' : 'dot';
+    }
+
+    if (typeof showToast === 'function') {
+      if (!prevWechatConnected && status.wechat_connected) {
+        showToast({ type: 'success', title: '微信已连接', message: '微信视频号已成功连接' });
+      } else if (prevWechatConnected && !status.wechat_connected) {
+        showToast({ type: 'warning', title: '微信已断开', message: '微信视频号连接已断开' });
+      }
     }
   }
 

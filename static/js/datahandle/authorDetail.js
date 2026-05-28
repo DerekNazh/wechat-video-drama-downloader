@@ -2,11 +2,9 @@
 
 // SSE 监听：实时更新作者下载统计
 function initSSEListener() {
-  console.log('[SSE] 正在连接 /api/events ...');
   var es = new EventSource('/api/events');
 
   es.onopen = function() {
-    console.log('[SSE] 连接已建立');
     _sseConnected = true;
     // 隐藏 SSE 断连提示
     var sseBanner = document.getElementById('sse-status-banner');
@@ -35,7 +33,6 @@ function initSSEListener() {
   es.addEventListener('service_status', function(e) {
     try {
       var data = JSON.parse(e.data);
-      console.log('[SSE] 收到 service_status:', data.service_online, data.wechat_connected);
       updateStatusFromPoll({
         service_online: data.service_online,
         wechat_connected: data.wechat_connected,
@@ -46,7 +43,6 @@ function initSSEListener() {
   });
 
   es.addEventListener('task_completed', function(e) {
-    console.log('[SSE] 收到 task_completed 事件:', e.data);
     try {
       var data = JSON.parse(e.data);
       handleSSETaskCompleted(data);
@@ -161,7 +157,6 @@ function handleSSETaskCompleted(data) {
 
   var idx = _catalogData.findIndex(function(c) { return c.username === username; });
   if (idx < 0) {
-    console.log('[SSE][完成] 作者不在 _catalogData 中: %s', username);
     return;
   }
 
@@ -169,8 +164,6 @@ function handleSSETaskCompleted(data) {
   var downloaded = data.downloaded;
   var completedVideoId = data.video_id || '';
 
-  console.log('[SSE][完成] 作者统计更新: %s, downloaded %s→%s, total=%s, videoId=%s',
-    username, _catalogData[idx].downloaded, downloaded, total, completedVideoId);
 
   // 1. 先更新 _authorVideosData 中该视频的 downloaded 状态
   if (completedVideoId && _authorVideosData[username]) {
@@ -181,7 +174,6 @@ function handleSSETaskCompleted(data) {
         downloaded: true,
         download_path: data.download_path || video.download_path || '',
       };
-      console.log('[SSE][完成] 已更新 _authorVideosData: %s downloaded=true, path=%s', completedVideoId, data.download_path || '');
 
       // 使用 State 层更新状态（触发 ReactiveRenderer）
       if (typeof State !== 'undefined' && State.videos && State.videos.updateStatus) {
@@ -272,7 +264,6 @@ function handleSSETaskProgress(data) {
     if (data.status === 'done' || data.status === 'error') {
       delete _cancelledTaskIds[taskId];
     }
-    console.log('[SSE][数据层] 忽略已取消任务的残留消息: taskId=%s, status=%s', taskId, data.status);
     return;
   }
 
@@ -282,18 +273,14 @@ function handleSSETaskProgress(data) {
   var videoId = existingTask ? existingTask.video_id : (data.video_id || '');
   if (!videoId) return;
 
-  console.log('[SSE][数据层] 收到进度: videoId=%s, taskId=%s, status=%s, downloaded=%s, speed=%s, total_size=%s',
-    videoId, data.id, data.status, data.downloaded, data.speed, data.total_size);
 
   // 完成/错误 → 全量刷新 + 更新视频行UI
   if (data.status === 'done' || data.status === 'error') {
-    console.log('[SSE][数据层] 任务终态: videoId=%s, status=%s → 触发 refreshActiveTasks + 更新视频行', videoId, data.status);
 
     // 0. 清除该 videoId 的节流定时器，防止延迟的进度更新覆盖终态 UI
     if (_progressThrottleTimers[videoId]) {
       clearTimeout(_progressThrottleTimers[videoId]);
       _progressThrottleTimers[videoId] = null;
-      console.log('[SSE][数据层] 终态清除节流器: videoId=%s', videoId);
     }
 
     // 1. 从 _activeTasks 移除已完成任务（使用 taskId 精确匹配，避免误删其他任务）
@@ -310,11 +297,9 @@ function handleSSETaskProgress(data) {
           var video = videos[videoId];
           // 守卫：task_completed 可能已先处理过，跳过重复更新
           if (video.downloaded) {
-            console.log('[SSE][数据层] task_progress(done) 跳过：task_completed 已处理 videoId=%s', videoId);
             break;
           }
           videos[videoId] = { ...video, downloaded: true, download_path: data.download_path || video.download_path || '' };
-          console.log('[SSE][数据层] 标记视频已下载: videoId=%s, username=%s, path=%s', videoId, username, data.download_path || '');
 
           // [新增] 使用 State 层更新状态（触发 ReactiveRenderer）
           if (typeof State !== 'undefined' && State.videos && State.videos.updateStatus) {
@@ -342,7 +327,6 @@ function handleSSETaskProgress(data) {
     // 2.5 终态时主动清除取消标记（防止 TTL 过期后残留消息重新插入）
     if (typeof _cancelledTaskIds !== 'undefined' && _cancelledTaskIds[data.id]) {
       delete _cancelledTaskIds[data.id];
-      console.log('[SSE][数据层] 终态清除取消标记: taskId=%s', data.id);
     }
 
     // 3. 刷新任务列表
@@ -354,7 +338,6 @@ function handleSSETaskProgress(data) {
       if (_completedVideoId && _currentAuthor && _currentPage === 'author') {
         var refreshedVideo = _authorVideosData[_currentAuthor.username]?.videos[_completedVideoId];
         if (refreshedVideo && refreshedVideo.download_path && typeof updateSingleVideoCompleted === 'function') {
-          console.log('[SSE][数据层] 全量刷新后补全播放按钮: videoId=%s, path=%s', _completedVideoId, refreshedVideo.download_path);
           updateSingleVideoCompleted(_completedVideoId, refreshedVideo);
         }
       }
@@ -374,7 +357,6 @@ function handleSSETaskProgress(data) {
   }
 
   if (taskIdx < 0) {
-    console.log('[SSE][数据层] 新任务插入 _activeTasks: videoId=%s, taskId=%s, %s%%', videoId, taskId, pct);
     _activeTasks.push({
       id: taskId,
       video_id: videoId,  // 使用从 _activeTasks 映射或 data.video_id 获取的正确 videoId
@@ -413,9 +395,6 @@ function handleSSETaskProgress(data) {
       _lastUpdateTime: now,
     };
 
-    console.log('[SSE][数据层] 更新 _activeTasks: videoId=%s, %s%%→%s%%, downloaded=%s/%s, speed=%s/s, 节流=%s',
-      videoId, oldPct, pct, formatFileSize(rawDownloaded), formatFileSize(rawSize), formatFileSize(rawSpeed),
-      _progressThrottleTimers[videoId] ? '跳过' : '放行');
   }
 
   // 200ms 节流：防止高频 DOM 更新
@@ -425,7 +404,6 @@ function handleSSETaskProgress(data) {
     // 防御：任务可能已在终态处理中被移除，跳过过期的进度更新
     var currentTask = _activeTasks.find(function(t) { return t.video_id === videoId; });
     if (!currentTask) {
-      console.log('[SSE][数据层] 节流回调跳过: videoId=%s 已不在 _activeTasks 中', videoId);
       return;
     }
     if (typeof updateSingleVideoProgress === 'function') {
@@ -553,25 +531,19 @@ async function loadAuthorDetail(username) {
     ReactiveRenderer.setCurrentView('all', 'short_video', { username: username });
   }
 
-  console.log(`[DEBUG][loadAuthorDetail] ===== 进入作者详情 =====`);
-  console.log(`[DEBUG][loadAuthorDetail] username=${username}, goOnline=${_goOnline}`);
 
   // 更新头部信息
   const author = _allAuthors.find(a => a.username === username);
   const cat = _catalogData.find(c => c.username === username) || {};
 
-  console.log(`[DEBUG][loadAuthorDetail] _catalogData中的统计: total=${cat.total}, downloaded=${cat.downloaded}, pending=${cat.pending}`);
-  console.log(`[DEBUG][loadAuthorDetail] 短视频=${cat.short_video_count}, 回放=${cat.replay_count}`);
 
   // 先看 _authorVideosData 中该作者的视频 downloaded 状态
   const localVideosBefore = Object.values(_authorVideosData[username]?.videos || {});
   const localDownloaded = localVideosBefore.filter(v => v.downloaded).length;
   const localPending = localVideosBefore.filter(v => !v.downloaded).length;
-  console.log(`[DEBUG][loadAuthorDetail] _authorVideosData视频统计: 总数=${localVideosBefore.length}, downloaded=${localDownloaded}, pending=${localPending}`);
 
   // 打印前5个视频的 downloaded 状态
   localVideosBefore.slice(0, 5).forEach(v => {
-    console.log(`[DEBUG][loadAuthorDetail] 视频: id=${v.id}, title=${v.title?.slice(0,15)}, downloaded=${v.downloaded}, download_path=${v.download_path}`);
   });
 
   // 头像
@@ -582,7 +554,6 @@ async function loadAuthorDetail(username) {
 
   document.getElementById("authorName").textContent = author?.nickname || '未知';
 
-  console.log(`[DEBUG][loadAuthorDetail] 头部渲染: total=${cat.total || 0}, downloaded=${cat.downloaded || 0}, pending=${cat.pending || 0}`);
 
   // 更新头部统计（从 _authorVideosData 实时计算，不依赖可能过时的 _catalogData）
   const detailVideos = Object.values(_authorVideosData[username]?.videos || {});
@@ -608,29 +579,23 @@ async function loadAuthorDetail(username) {
   const localVideos = Object.values(_authorVideosData[username]?.videos || {});
   if (localVideos.length > 0) {
     renderVideoList(localVideos);
-    console.log(`[DEBUG][loadAuthorDetail] 用本地数据渲染了 ${localVideos.length} 个视频`);
   } else {
     document.getElementById("videoList").innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</div>';
-    console.log(`[DEBUG][loadAuthorDetail] 本地无视频数据，显示加载中`);
   }
 
   // 如果 Go 在线，增量同步作者视频
   if (_goOnline && author?.id) {
     try {
-      console.log(`[DEBUG][loadAuthorDetail] 开始增量同步: author.id=${author.id}`);
       const res = await fetch(`/api/video/author/${author.id}/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {
-        console.log(`[DEBUG][loadAuthorDetail] 增量同步请求失败: ${res.status}`);
       } else {
         const data = await res.json();
-        console.log(`[DEBUG][loadAuthorDetail] 增量同步返回: code=${data.code}, added=${data.data?.added || 0}`);
 
         if (data.code === 0 && (data.data?.added || 0) > 0) {
           const added = data.data.added;
-          console.log(`[DEBUG][loadAuthorDetail] 有新增视频(${added})，执行 loadAllDataFromBackend`);
           await loadAllDataFromBackend();
           // 重新加载当前类型的视频
           const typeRes = await fetch(`/api/video/author/${author.id}?video_type=${_currentVideoType}`);
@@ -643,7 +608,6 @@ async function loadAuthorDetail(username) {
             });
             const newVideos = Object.values(_authorVideosData[username].videos);
             const newDownloaded = newVideos.filter(v => v.downloaded).length;
-            console.log(`[DEBUG][loadAuthorDetail] 全量刷新后: 总数=${newVideos.length}, downloaded=${newDownloaded}`);
             renderVideoList(newVideos);
             updateAuthorStatsByType(typeData.stats);
             // 更新全局进度条
@@ -652,7 +616,6 @@ async function loadAuthorDetail(username) {
             }
           }
         } else {
-          console.log(`[DEBUG][loadAuthorDetail] 无新增视频，不刷新`);
           // 本地本来就没视频时，显示空状态而非"加载中..."
           if (localVideos.length === 0) {
             renderVideoList([]);
@@ -673,7 +636,6 @@ async function loadAuthorDetail(username) {
   const finalShortVideo = document.getElementById("authorShortVideo")?.textContent;
   const finalReplay = document.getElementById("authorReplay")?.textContent;
   const finalDownloaded = document.getElementById("authorDownloaded")?.textContent;
-  console.log(`[DEBUG][loadAuthorDetail] ===== 最终DOM统计: shortVideo=${finalShortVideo}, replay=${finalReplay}, downloaded=${finalDownloaded} =====`);
 }
 
 // 增量同步作者视频
@@ -687,7 +649,6 @@ async function syncAuthorVideos(username) {
     });
     const data = await res.json();
     if (data.code === 0) {
-      console.log(`[增量同步] ${username}: 新增 ${data.data?.added || 0} 个视频`);
     }
   } catch(e) {
     console.error('[增量同步] 失败:', e);

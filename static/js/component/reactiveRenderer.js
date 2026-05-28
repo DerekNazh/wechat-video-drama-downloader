@@ -46,7 +46,6 @@ var ReactiveRenderer = {
       self._onTaskCancel(e);
     });
 
-    console.log('[ReactiveRenderer] 已初始化，订阅 State 事件');
   },
 
   // ==================== 公共 API ====================
@@ -57,8 +56,6 @@ var ReactiveRenderer = {
     this._currentVideoType = videoType || 'short_video';
     if (author) this._currentAuthor = author;
 
-    console.log('[ReactiveRenderer] 视图状态更新: tab=%s, type=%s, author=%s',
-      this._currentTab, this._currentVideoType, author?.username || 'null');
   },
 
   // 刷新当前视图（从 State 重新渲染）
@@ -90,18 +87,12 @@ var ReactiveRenderer = {
     var changes = e.changes;
     var username = e.username;
 
-    console.log('[ReactiveRenderer] 视频状态变化: id=%s, downloaded=%s→%s, type=%s',
-      videoId,
-      changes.downloaded?.old,
-      changes.downloaded?.new,
-      changes.video_type?.new || 'short_video');
 
     // 1. 更新所有 Tab 统计（无论当前在哪个 Tab）
     this._updateAllStats(username);
 
     // 2. 判断是否需要更新 DOM
     if (!this._shouldRender(video)) {
-      console.log('[ReactiveRenderer] 视频不在当前视图，跳过 DOM 更新');
       return;
     }
 
@@ -125,7 +116,6 @@ var ReactiveRenderer = {
 
     // 如果当前在"正在下载"tab，需要重新渲染视频列表
     if (this._currentTab === 'downloading') {
-      console.log('[ReactiveRenderer] 新任务添加，重新渲染"正在下载"tab');
       this.refreshCurrentView();
     }
   },
@@ -133,6 +123,12 @@ var ReactiveRenderer = {
   _onTaskProgressChange: function(e) {
     var changes = e.changes;
     if (!changes || changes.length === 0) return;
+
+    // "全部"和"已下载"tab 的进度更新由 updateSingleVideoProgress（链路A）负责
+    // ReactiveRenderer 不再参与，避免两条链路互相覆盖导致速度/大小信息丢失
+    if (this._currentTab === 'all' || this._currentTab === 'downloaded') {
+      return;
+    }
 
     changes.forEach(function(change) {
       var taskId = change.id;
@@ -155,7 +151,6 @@ var ReactiveRenderer = {
     var data = e.data;
     var videoId = data.video_id;
 
-    console.log('[ReactiveRenderer] 任务完成: taskId=%s, videoId=%s', taskId, videoId);
 
     // 更新视频状态
     if (videoId) {
@@ -239,7 +234,6 @@ var ReactiveRenderer = {
   _updateVideoRow: function(video, changes) {
     var row = document.querySelector('.video-row[data-id="' + video.id + '"]');
     if (!row) {
-      console.log('[ReactiveRenderer] 未找到视频行 DOM: %s', video.id);
       return;
     }
 
