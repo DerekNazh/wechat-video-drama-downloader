@@ -117,17 +117,19 @@ def stop_service():
     if not svc.is_process_running():
         return {"code": 0, "data": {"already_stopped": True}, "msg": "服务未在运行"}
 
+    # 先保存活跃任务为 pending（断点续传），再杀 Go 进程
+    # 顺序很重要：如果先杀后保存，kill失败时任务不保存
+    from core.utils.database import db
+    for status in ("running", "wait"):
+        tasks = db.list_download_tasks(status=status, limit=1000)
+        for task in tasks:
+            db.update_download_task_status(task.task_id, "pending")
+        if tasks:
+            logger.info("[stop_service] 已保存 %d 个 %s 任务为 pending", len(tasks), status)
+
     success = svc.stop()
 
     if success:
-        # 将 running 任务保存为 pending（断点续传）
-        from core.utils.database import db
-        running_tasks = db.list_download_tasks(status="running", limit=1000)
-        for task in running_tasks:
-            db.update_download_task_status(task.task_id, "pending")
-        if running_tasks:
-            logger.info("[stop_service] 已保存 %d 个任务为 pending（断点续传）", len(running_tasks))
-
         logger.info("[stop_service] Go 后端服务已停止")
         return {"code": 0, "data": {"already_stopped": False}, "msg": "服务已停止"}
     else:
@@ -141,17 +143,19 @@ def restart_service():
     from core.utils.base_servier import WechatVideoService
 
     svc = WechatVideoService()
+
+    # 先保存活跃任务为 pending（restart 内部会 stop 再 start，必须在 stop 之前保存）
+    from core.utils.database import db
+    for status in ("running", "wait"):
+        tasks = db.list_download_tasks(status=status, limit=1000)
+        for task in tasks:
+            db.update_download_task_status(task.task_id, "pending")
+        if tasks:
+            logger.info("[restart_service] 已保存 %d 个 %s 任务为 pending", len(tasks), status)
+
     success = svc.restart()
 
     if success:
-        # 重启前保存 running 任务为 pending（restart 内部会 stop 再 start）
-        from core.utils.database import db
-        running_tasks = db.list_download_tasks(status="running", limit=1000)
-        for task in running_tasks:
-            db.update_download_task_status(task.task_id, "pending")
-        if running_tasks:
-            logger.info("[restart_service] 已保存 %d 个任务为 pending（断点续传）", len(running_tasks))
-
         # 后台恢复断点续传任务
         import threading
         import time

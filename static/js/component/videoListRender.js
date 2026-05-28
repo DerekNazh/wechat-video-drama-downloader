@@ -1,5 +1,9 @@
 // 视频列表渲染组件
 
+function escapeAttr(str) {
+  return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // 当前视频类型：short_video | live_replay
 var _currentVideoType = 'short_video';
 
@@ -20,17 +24,21 @@ async function switchVideoType(type) {
   });
   console.log(`[switchVideoType] 已更新 Tab 样式`);
 
+  // 重置分页、清空选中
+  _currentPageNum = 1;
+  if (typeof clearSelection === 'function') clearSelection();
+
+  // 清空搜索和日期过滤
+  var searchInput = document.getElementById('videoSearchInput');
+  if (searchInput) searchInput.value = '';
+  if (typeof _dateRange !== 'undefined') _dateRange = { start: null, end: null };
+  var dateLabel = document.getElementById('dateFilterLabel');
+  if (dateLabel) dateLabel.textContent = '全部日期';
+
   // [新增] 通知 ReactiveRenderer 当前视图状态
   if (typeof ReactiveRenderer !== 'undefined') {
-    ReactiveRenderer.setCurrentView(
-      document.querySelector('.video-tab.active')?.dataset.tab || 'all',
-      type,
-      _currentAuthor
-    );
+    ReactiveRenderer.setCurrentView('all', type, _currentAuthor);
   }
-
-  // 重置分页
-  _currentPageNum = 1;
 
   // 重新从后端加载对应类型的视频列表
   console.log(`[switchVideoType] _currentAuthor=`, _currentAuthor);
@@ -56,7 +64,8 @@ async function switchVideoType(type) {
         const videos = Object.values(_authorVideosData[username].videos);
         console.log(`[switchVideoType] 准备渲染 ${videos.length} 个视频，类型=${type}`);
         console.log(`[switchVideoType] 视频列表:`, videos.map(v => ({ id: v.video_id, title: v.title?.slice(0,20), video_type: v.video_type })));
-        renderVideoList(videos);
+        const currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
+        renderVideoList(videos, currentFilter);
 
         // 更新统计
         console.log(`[switchVideoType] stats=`, data.stats);
@@ -152,10 +161,12 @@ function renderVideoList(videos, filter = 'all') {
   }
 
   if (filtered.length === 0) {
-    el.className = 'video-list no-animation';
+    var videoView = State.ui.getVideoViewMode();
+    var viewClass = (videoView !== 'list') ? (videoView + '-view') : '';
+    el.className = 'video-list no-animation ' + viewClass;
     const hasAnyVideos = videos.length > 0;
     const emptyMsg = hasAnyVideos ? '没有符合条件的视频' : '此作者还没有发布过视频';
-    el.innerHTML = `<div class="author-empty"><div class="empty-icon">o</div><p>${emptyMsg}</p></div>`;
+    el.innerHTML = `<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="4" x2="22" y2="20"/></svg><div class="empty-title">${emptyMsg}</div></div>`;
     return;
   }
 
@@ -197,42 +208,64 @@ function renderVideoList(videos, filter = 'all') {
 
     let statusBadge = '';
     if (video.downloaded) {
-      statusBadge = `<span class="video-status-badge downloaded" data-path="${video.download_path || ''}" onclick="event.stopPropagation(); openVideo(this.dataset.path)">已下载</span>`;
+      statusBadge = `<span class="video-status-badge downloaded" data-path="${escapeAttr(video.download_path || '')}" onclick="event.stopPropagation(); openVideo(this.dataset.path)">已下载</span>`;
     } else if (downloadingIds.has(video.id)) {
       const progress = progressMap[video.id];
       const pct = progress?.percent || 0;
-      const rawDownloaded = progress?.downloaded || 0;
-      const rawSize = progress?.size || 0;
-      const rawSpeed = progress?.speed || 0;
-      const downloaded = formatFileSize(rawDownloaded) || '--';
-      const size = formatFileSize(rawSize) || '--';
-      const speed = rawSpeed ? `${formatFileSize(rawSpeed)}/s` : '';
-      const taskId = progress?.id || '';
-      statusBadge = `
-        <span class="video-status-badge downloading">
-          <div class="download-header">
-            <span class="progress-percent">${pct}%</span>
-            <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载">×</button>
-          </div>
-          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-          <div class="download-stats">
-            <span class="stat-size">${downloaded}/${size}</span>
-            ${speed ? `<span class="stat-divider"></span><span class="stat-speed">${speed}</span>` : ''}
-          </div>
-        </span>`;
+      const isPaused = progress?.status === 'paused';
+      if (isPaused) {
+        const rawDownloaded = progress?.downloaded || 0;
+        const rawSize = progress?.size || 0;
+        const downloaded = formatFileSize(rawDownloaded) || '--';
+        const size = formatFileSize(rawSize) || '--';
+        const taskId = progress?.id || '';
+        statusBadge = `
+          <span class="video-status-badge paused" title="服务离线，下载已暂停">
+            <div class="download-header">
+              <span class="progress-percent">${pct}%</span>
+              <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button>
+            </div>
+            <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill paused-fill" style="width:${pct}%"></div></div>
+            <div class="download-stats">
+              <span class="stat-size">${downloaded}/${size}</span>
+              <span class="stat-divider"></span><span class="stat-speed muted">已暂停</span>
+            </div>
+          </span>`;
+      } else {
+        const rawDownloaded = progress?.downloaded || 0;
+        const rawSize = progress?.size || 0;
+        const rawSpeed = progress?.speed || 0;
+        const downloaded = formatFileSize(rawDownloaded) || '--';
+        const size = formatFileSize(rawSize) || '--';
+        const speed = rawSpeed > 0 ? `${formatFileSize(rawSpeed)}/s` : '--';
+        const tooltip = `${downloaded}/${size} · ${speed}`;
+        const taskId = progress?.id || '';
+        statusBadge = `
+          <span class="video-status-badge downloading" title="${tooltip}">
+            <div class="download-header">
+              <span class="progress-percent">${pct}%</span>
+              <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button>
+            </div>
+            <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div class="download-stats">
+              <span class="stat-size">${downloaded}/${size}</span>
+              <span class="stat-divider"></span><span class="stat-speed${rawSpeed > 0 ? '' : ' muted'}">${speed}</span>
+            </div>
+          </span>`;
+      }
     } else {
       statusBadge = `<span class="video-status-badge pending">待下载</span>`;
     }
 
     const openBtn = video.downloaded && video.download_path
-      ? `<button class="video-open-btn" data-path="${video.download_path}" onclick="event.stopPropagation(); openVideo(this.dataset.path)" title="打开视频">▶</button>`
+      ? `<button class="video-open-btn" data-path="${escapeAttr(video.download_path)}" onclick="event.stopPropagation(); openVideo(this.dataset.path)" title="打开视频">▶</button>`
       : '';
 
     const rowClass = selected + (downloadingIds.has(video.id) ? ' downloading' : '');
 
     html += `
-      <div class="video-row ${rowClass}" data-id="${video.id}" onclick="toggleVideoSelect('${video.id}')">
-        <div class="video-checkbox"></div>
+      <div class="video-row ${rowClass}" data-id="${video.id}">
+        <div class="video-checkbox" onclick="event.stopPropagation(); toggleVideoSelect('${video.id}')" role="checkbox" aria-checked="${_selectedVideos.has(video.id) ? 'true' : 'false'}" aria-label="选择视频" tabindex="0"></div>
         <div class="video-thumb-small">
           ${coverHtml}
           ${durationStr ? `<span class="video-duration">${durationStr}</span>` : ''}
@@ -259,8 +292,9 @@ function renderVideoList(videos, filter = 'all') {
   el.innerHTML = html;
   el.classList.remove('no-animation');
   el.classList.remove('grid-view', 'compact-view');
-  if (_currentView !== 'list') {
-    el.classList.add(_currentView + '-view');
+  var videoView = State.ui.getVideoViewMode();
+  if (videoView !== 'list') {
+    el.classList.add(videoView + '-view');
   }
   lazyLoadImages();
   updateSelectionBar();
@@ -367,11 +401,38 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
     } else if (downloadingIds.has(video.id)) {
       const task = progressMap[video.id];
       if (task) {
-        if (!badge.classList.contains('downloading')) {
+        if (task.status === 'paused') {
+          if (!badge.classList.contains('paused')) {
+            badge.className = 'video-status-badge paused';
+            const pct = task.percent || 0;
+            const dlStr = formatFileSize(task.downloaded || 0) || '--';
+            const szStr = formatFileSize(task.size || 0) || '--';
+            badge.innerHTML = `
+              <div class="download-header">
+                <span class="progress-percent">${pct}%</span>
+                <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${task.id || ''}')" title="取消下载" aria-label="取消下载">×</button>
+              </div>
+              <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill paused-fill" style="width:${pct}%"></div></div>
+              <div class="download-stats">
+                <span class="stat-size">${dlStr}/${szStr}</span>
+                <span class="stat-divider"></span><span class="stat-speed muted">已暂停</span>
+              </div>`;
+            badge.title = '服务离线，下载已暂停';
+          }
+        } else if (badge.classList.contains('paused') && !badge.classList.contains('resuming')) {
+          // paused → resuming transition
+          badge.className = 'video-status-badge resuming';
+          const pct = task.percent || 0;
+          badge.textContent = '恢复中 (' + pct + '%)';
+          badge.title = '正在恢复下载...';
+          // actual downloading badge will replace on next progress SSE
+        } else if (!badge.classList.contains('downloading') && !badge.classList.contains('resuming')) {
           badge.className = 'video-status-badge downloading';
           const pct = task.percent || 0;
           const dlStr = formatFileSize(task.downloaded || 0) || '--';
           const szStr = formatFileSize(task.size || 0) || '--';
+          const rawSpeed = task.speed || 0;
+          const speedStr = rawSpeed > 0 ? `${formatFileSize(rawSpeed)}/s` : '--';
           badge.innerHTML = `
             <div class="download-header">
               <span class="progress-percent">${pct}%</span>
@@ -380,7 +441,9 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
             <div class="download-stats">
               <span class="stat-size">${dlStr}/${szStr}</span>
+              <span class="stat-divider"></span><span class="stat-speed${rawSpeed > 0 ? '' : ' muted'}">${speedStr}</span>
             </div>`;
+          badge.title = `${dlStr}/${szStr}`;
         } else {
           const pct = task.percent || 0;
           const pctEl = badge.querySelector('.progress-percent');
@@ -389,6 +452,13 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
           if (fill) fill.style.width = `${pct}%`;
           const sizeEl = badge.querySelector('.stat-size');
           if (sizeEl) sizeEl.textContent = `${formatFileSize(task.downloaded || 0) || '--'}/${formatFileSize(task.size || 0) || '--'}`;
+          const speedEl = badge.querySelector('.stat-speed');
+          if (speedEl) {
+            const rawSpeed = task.speed || 0;
+            speedEl.textContent = rawSpeed > 0 ? `${formatFileSize(rawSpeed)}/s` : '--';
+            speedEl.classList.toggle('muted', rawSpeed === 0);
+          }
+          badge.title = `${formatFileSize(task.downloaded || 0) || '--'}/${formatFileSize(task.size || 0) || '--'}`;
         }
       }
     } else {
@@ -408,33 +478,13 @@ function _removeRowAndUpdatePagination(row) {
 
   row.remove();
 
-  var remainingRows = listEl.querySelectorAll('.video-row');
-  if (remainingRows.length === 0) {
-    if (_currentPageNum > 1) {
-      _currentPageNum--;
-      refreshVideoList();
-      return;
-    }
-    listEl.innerHTML = '<div class="author-empty"><div class="empty-icon">o</div><p>没有符合条件的视频</p></div>';
-    return;
-  }
-
-  var pageInfoEl = listEl.querySelector('.page-info');
-  if (pageInfoEl) {
-    var match = pageInfoEl.textContent.match(/(\d+)-(\d+)\s*\/\s*(\d+)/);
-    if (match) {
-      var oldFrom = parseInt(match[1]);
-      var oldTo = parseInt(match[2]);
-      var oldTotal = parseInt(match[3]);
-      var newTotal = oldTotal - 1;
-      if (newTotal <= 0) {
-        listEl.innerHTML = '<div class="author-empty"><div class="empty-icon">o</div><p>没有符合条件的视频</p></div>';
-        return;
-      }
-      var newTo = Math.min(oldTo - 1, newTotal);
-      if (newTo < oldFrom) newTo = oldFrom;
-      pageInfoEl.textContent = oldFrom + '-' + newTo + ' / ' + newTotal;
-    }
+  // 重新渲染当前页以补全数据（避免页面缺行）
+  var videos = Object.values(_authorVideosData[_currentAuthor?.username]?.videos || {});
+  if (videos.length > 0) {
+    var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
+    renderVideoList(videos, currentFilter);
+  } else {
+    listEl.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="4" x2="22" y2="20"/></svg><div class="empty-title">没有符合条件的视频</div></div>';
   }
 }
 
@@ -454,40 +504,23 @@ function updateSingleVideoProgress(videoId, task) {
   var pct = task.percent || 0;
   var dlStr = formatFileSize(task.downloaded || 0) || '--';
   var szStr = formatFileSize(task.size || 0) || '--';
-  var speed = task.speed > 0 ? formatFileSize(task.speed) + '/s' : '';
+  var hasSpeed = task.speed > 0;
+  var speed = hasSpeed ? formatFileSize(task.speed) + '/s' : '--/s';
 
   if (badge.classList.contains('downloading')) {
-    console.log('[SSE][渲染层] 快速路径: id=%s, %s%%, %s/%s, %s', videoId, pct, dlStr, szStr, speed || '--');
+    console.log('[SSE][渲染层] 快速路径: id=%s, %s%%, %s/%s, %s', videoId, pct, dlStr, szStr, hasSpeed ? speed : '--');
     var pctEl = badge.querySelector('.progress-percent');
     if (pctEl) pctEl.textContent = pct + '%';
     var fill = badge.querySelector('.progress-fill');
     if (fill) fill.style.width = pct + '%';
+    var bar = badge.querySelector('.progress-bar');
+    if (bar) bar.setAttribute('aria-valuenow', pct);
     var sizeEl = badge.querySelector('.stat-size');
     if (sizeEl) sizeEl.textContent = dlStr + '/' + szStr;
     var speedEl = badge.querySelector('.stat-speed');
-    if (speed) {
-      if (speedEl) {
-        speedEl.textContent = speed;
-      } else {
-        // 速度元素不存在（初始渲染时 speed=0 未生成），需要创建
-        var statsEl = badge.querySelector('.download-stats');
-        if (statsEl) {
-          var divider = document.createElement('span');
-          divider.className = 'stat-divider';
-          statsEl.appendChild(divider);
-          speedEl = document.createElement('span');
-          speedEl.className = 'stat-speed';
-          speedEl.textContent = speed;
-          statsEl.appendChild(speedEl);
-        }
-      }
-    } else if (speedEl) {
-      // 速度变为0，移除速度元素
-      var divider = speedEl.previousElementSibling;
-      if (divider && divider.classList.contains('stat-divider')) {
-        divider.remove();
-      }
-      speedEl.remove();
+    if (speedEl) {
+      speedEl.textContent = speed;
+      speedEl.classList.toggle('muted', !hasSpeed);
     }
   } else {
     console.log('[SSE][渲染层] 慢速路径(切换状态): id=%s, %s%%, %s/%s', videoId, pct, dlStr, szStr);
@@ -503,12 +536,12 @@ function updateSingleVideoProgress(videoId, task) {
     badge.innerHTML =
       '<div class="download-header">' +
         '<span class="progress-percent">' + pct + '%</span>' +
-        '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')">×</button>' +
+        '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
       '</div>' +
-      '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+      '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
       '<div class="download-stats">' +
         '<span class="stat-size">' + dlStr + '/' + szStr + '</span>' +
-        (speed ? '<span class="stat-divider"></span><span class="stat-speed">' + speed + '</span>' : '') +
+        '<span class="stat-divider"></span><span class="stat-speed' + (hasSpeed ? '' : ' muted') + '">' + speed + '</span>' +
       '</div>';
     row.classList.add('downloading');
   }
@@ -527,15 +560,17 @@ function updateSingleVideoCompleted(videoId, video) {
   console.log('[SSE][渲染层][完成] 切换为已下载: id=%s, path=%s', videoId, video.download_path || '');
 
   var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
-  if (currentFilter === 'downloading') {
+  // 完成的视频不属于"正在下载"和"待下载"筛选视图，需移除并重新渲染
+  if (currentFilter === 'downloading' || currentFilter === 'pending') {
     _removeRowAndUpdatePagination(row);
     return;
   }
 
-  badge.className = 'video-status-badge downloaded';
+  badge.className = 'video-status-badge downloaded completed-anim';
   badge.dataset.path = video.download_path || '';
   badge.onclick = video.download_path ? function(e) { e.stopPropagation(); openVideo(video.download_path); } : null;
   badge.textContent = '已下载';
+  setTimeout(function() { badge.classList.remove('completed-anim'); }, 400);
 
   row.classList.remove('downloading');
 
@@ -560,17 +595,19 @@ function updateSingleVideoError(videoId) {
   var badge = row.querySelector('.video-status-badge');
   if (!badge) return;
 
-  console.log('[SSE][渲染层][错误] 恢复为待下载: id=%s', videoId);
+  console.log('[SSE][渲染层][错误] 切换为错误状态: id=%s', videoId);
 
   var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
-  if (currentFilter === 'downloading') {
+  // 失败的视频不属于"正在下载"和"已下载"筛选视图，需移除并重新渲染
+  if (currentFilter === 'downloading' || currentFilter === 'downloaded') {
     _removeRowAndUpdatePagination(row);
     return;
   }
 
-  badge.className = 'video-status-badge pending';
-  badge.textContent = '待下载';
+  badge.className = 'video-status-badge error';
+  badge.textContent = '下载失败';
   badge.onclick = null;
+  badge.setAttribute('role', 'alert');
 
   row.classList.remove('downloading');
 

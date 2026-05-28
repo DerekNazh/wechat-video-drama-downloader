@@ -78,10 +78,10 @@ function renderAuthorGrid(list) {
 
   if (list.length === 0) {
     el.innerHTML = `
-      <div class="author-empty">
-        <div class="empty-icon">o</div>
-        <p>暂无监控作者</p>
-        <span>点击上方搜索框添加作者</span>
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+        <div class="empty-title">暂无监控作者</div>
+        <div class="empty-desc">点击上方搜索框添加作者</div>
       </div>
     `;
     return;
@@ -91,7 +91,8 @@ function renderAuthorGrid(list) {
   updateViewToggle();
 
   // 根据视图模式渲染
-  if (_currentView === 'list') {
+  var authorView = State.ui.getAuthorViewMode();
+  if (authorView === 'list') {
     renderAuthorListView(el, list);
   } else {
     renderAuthorCardView(el, list);
@@ -255,16 +256,25 @@ function renderAuthorCardView(el, list) {
 }
 
 function switchAuthorView(mode) {
-  State.ui.setCurrentView(mode);
+  State.ui.setAuthorViewMode(mode);
   _authorPageNum = 1;
   filterAuthors(_currentAuthorFilter);
 }
 
 function updateViewToggle() {
-  document.querySelectorAll('.view-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.view === _currentView);
+  var authorView = State.ui.getAuthorViewMode();
+  document.querySelectorAll('#viewToggle .view-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === authorView);
   });
 }
+
+// 初始化作者视图模式（从 localStorage 恢复）
+function initAuthorViewMode() {
+  var savedView = localStorage.getItem('authorViewMode') || 'grid';
+  updateViewToggle();
+}
+
+document.addEventListener('DOMContentLoaded', initAuthorViewMode);
 
 /**
  * 按状态过滤（保持搜索词）

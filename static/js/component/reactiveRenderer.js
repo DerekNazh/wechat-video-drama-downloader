@@ -297,7 +297,7 @@ var ReactiveRenderer = {
     var pct = task.percent || 0;
     var dlStr = typeof formatFileSize === 'function' ? formatFileSize(task.downloaded || 0) || '--' : '--';
     var szStr = typeof formatFileSize === 'function' ? formatFileSize(task.size || 0) || '--' : '--';
-    var speed = task.speed > 0 && typeof formatFileSize === 'function' ? formatFileSize(task.speed) + '/s' : '';
+    var speed = task.speed > 0 && typeof formatFileSize === 'function' ? formatFileSize(task.speed) + '/s' : '--';
 
     if (badge.classList.contains('downloading')) {
       // 快速路径：只更新数字
@@ -305,19 +305,21 @@ var ReactiveRenderer = {
       if (pctEl) pctEl.textContent = pct + '%';
       var fill = badge.querySelector('.progress-fill');
       if (fill) fill.style.width = pct + '%';
-      var sizeEl = badge.querySelector('.stat-size');
-      if (sizeEl) sizeEl.textContent = dlStr + '/' + szStr;
+      badge.title = dlStr + '/' + szStr + ' · ' + speed;
     } else {
       // 慢速路径：切换为下载中状态
       badge.className = 'video-status-badge downloading';
+      badge.title = dlStr + '/' + szStr + ' · ' + speed;
+      var hasSpeed = task.speed > 0;
       badge.innerHTML =
         '<div class="download-header">' +
           '<span class="progress-percent">' + pct + '%</span>' +
-          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + task.id + '\')">×</button>' +
+          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + task.id + '\')" aria-label="取消下载">×</button>' +
         '</div>' +
-        '<div class="progress-bar"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
         '<div class="download-stats">' +
           '<span class="stat-size">' + dlStr + '/' + szStr + '</span>' +
+          '<span class="stat-divider"></span><span class="stat-speed' + (hasSpeed ? '' : ' muted') + '">' + speed + '</span>' +
         '</div>';
       row.classList.add('downloading');
     }
@@ -363,47 +365,15 @@ var ReactiveRenderer = {
   },
 
   _updateTabLabels: function(stats) {
-    var typeStats = this._currentVideoType === 'live_replay'
-      ? stats.live_replay
-      : stats.short_video;
-
-    // 计算正在下载数量
-    var runningTasks = State.tasks.getRunning();
-    var downloadingCount = 0;
-    runningTasks.forEach(function(t) {
-      var video = State.videos.get(State.videos.getAuthorByVideoId(t.video_id), t.video_id);
-      if (video && (video.video_type || 'short_video') === this._currentVideoType) {
-        downloadingCount++;
-      }
-    }.bind(this));
-
-    // 更新 Tab 标签
+    // 不再显示 Tab 数量标注，保持原始文本
     var tabs = document.querySelectorAll('.video-tab');
     tabs.forEach(function(tab) {
-      var tabType = tab.dataset.tab;
-      var count = 0;
-      switch (tabType) {
-        case 'all':
-          count = typeStats.total;
-          break;
-        case 'downloaded':
-          count = typeStats.downloaded;
-          break;
-        case 'pending':
-          count = typeStats.total - typeStats.downloaded - downloadingCount;
-          break;
-        case 'downloading':
-          count = downloadingCount;
-          break;
-      }
-
-      // 更新 Tab 文本（保留原始文本，只更新数字）
       var baseText = tab.dataset.baseText;
       if (!baseText) {
         baseText = tab.textContent.replace(/\s*\(\d+\)/, '').trim();
         tab.dataset.baseText = baseText;
       }
-      tab.textContent = baseText + ' (' + count + ')';
+      tab.textContent = baseText;
     });
   },
 

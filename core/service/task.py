@@ -5,6 +5,7 @@
 
 import logging
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -14,6 +15,7 @@ from core.utils.weixin_client import WechatVideoAPIClient
 from core.utils.event_bus import emit_task_completed
 from core.service.search import SearchService
 
+_resume_lock = threading.Lock()
 logger = logging.getLogger("task_service")
 
 
@@ -192,10 +194,16 @@ class TaskService:
     def get_downloading_tasks(self) -> list[dict]:
         """获取所有正在下载的任务
 
-        每次调用时先跟 Go 后端同步实时进度，再返回本地数据。
+        每次调用时先自动清理孤儿任务，再跟 Go 后端同步实时进度，最后返回本地数据。
         同步后状态变为 done/completed 的任务也会返回（progress=100），
         确保前端能看到最终完成状态。
         """
+        # 自动清理 Go 端不存在的孤儿任务
+        try:
+            TaskService.cleanup_stale_tasks()
+        except Exception as e:
+            logger.warning(f"[get_downloading_tasks] 孤儿任务清理失败: {e}")
+
         tasks = db.list_download_tasks(status=None)
 
         result = []
@@ -398,11 +406,13 @@ class TaskService:
 
     @staticmethod
     def cleanup_stale_tasks():
-        """清理 Go 端不存在的残留任务（running/pending/wait）
+        """清理 Go 端不存在的残留任务（running/wait）
 
-        Go 后端重启后，本地 DB 中残留的 running/pending/wait 任务
+        Go 后端重启后，本地 DB 中残留的 running/wait 任务
         在 Go 端已不存在，会阻塞监控器并发窗口。
-        此方法扫描所有活跃任务，与 Go 端任务列表对比，清理不在 Go 端的残留记录。
+        此方法扫描活跃任务，与 Go 端任务列表对比，清理不在 Go 端的残留记录。
+        清理方式：标记为 cancelled（保留记录），而非删除。
+        注意：pending 任务不清理，它们可能是刚恢复的断点续传任务。
         """
         import core.utils.database as db_module
         import requests as http_requests
@@ -417,24 +427,27 @@ class TaskService:
                     go_task_ids.add(t.get("id"))
         except Exception as e:
             logger.warning(f"[cleanup_stale] 无法连接 Go 后端，跳过清理: {e}")
-            return
+            return {"cleaned": 0, "error": str(e)}
 
         # 扫描本地活跃任务
+        # pending 任务不清理：它们可能是刚恢复的，Go 端还没来得及处理
         tasks = db_module.db.list_download_tasks(status=None)
         cleaned = 0
         for task in tasks:
-            if task.status not in ("running", "pending", "wait"):
+            if task.status not in ("running", "wait"):
                 continue
             if task.task_id not in go_task_ids:
                 logger.info(f"[cleanup_stale] 清理残留任务: task_id={task.task_id}, "
                             f"video_id={task.video_id}, status={task.status}")
-                db_module.db.delete_download_task(task.task_id)
+                db_module.db.update_download_task_status(task.task_id, "cancelled")
                 cleaned += 1
 
         if cleaned > 0:
             logger.info(f"[cleanup_stale] 清理完成: 共清理 {cleaned} 个残留任务")
         else:
             logger.info("[cleanup_stale] 无残留任务需要清理")
+
+        return {"cleaned": cleaned}
 
 
 def save_progress_from_sse(progress_data: dict):
@@ -600,12 +613,11 @@ def resume_download_task(task_id: str) -> bool:
         return False
 
     # 如果新 ID 与旧 ID 不同，需要更新数据库
+    # 安全策略：先创建新记录，再删除旧记录，避免 delete→create 之间崩溃导致数据永久丢失
     if new_task_id != task_id:
         logger.info(f"[resume] ID变更: {task_id} -> {new_task_id}")
-        # 删除旧记录
-        db.delete_download_task(task_id)
-        # 创建新记录（使用新 ID）
-        db.create_download_task(DownloadTask(
+        # 先创建新记录（使用新 ID）
+        new_task = DownloadTask(
             task_id=new_task_id,
             video_id=task.video_id,
             url=effective_url,
@@ -625,7 +637,13 @@ def resume_download_task(task_id: str) -> bool:
             completed_at=None,
             video_type=task.video_type if hasattr(task, 'video_type') else "short_video",
             create_time=task.create_time if hasattr(task, 'create_time') else "",
-        ))
+        )
+        created = db.create_download_task(new_task)
+        if not created:
+            logger.error("[resume] 创建新记录失败: new_id=%s, 旧记录保留", new_task_id)
+            return False
+        # 新记录创建成功后，安全删除旧记录
+        db.delete_download_task(task_id)
     else:
         # ID 相同，只更新状态
         logger.info(f"[resume] ID不变: {task_id}")
@@ -641,36 +659,42 @@ def resume_all_running_tasks() -> dict:
     Returns:
         {"resumed": 恢复数量, "skipped": 跳过数量, "failed": 失败数量}
     """
-    # 查询 running 和 pending 状态的任务
-    running_tasks = db.list_download_tasks(status="running", limit=1000)
-    pending_tasks = db.list_download_tasks(status="pending", limit=1000)
+    if not _resume_lock.acquire(blocking=False):
+        logger.info("[resume_all] 已有恢复任务正在进行，跳过")
+        return {"resumed": 0, "skipped": 1, "failed": 0}
+    try:
+        # 查询 running 和 pending 状态的任务
+        running_tasks = db.list_download_tasks(status="running", limit=1000)
+        pending_tasks = db.list_download_tasks(status="pending", limit=1000)
 
-    total_to_resume = len(running_tasks) + len(pending_tasks)
-    if total_to_resume == 0:
-        logger.info("[resume_all_running_tasks] 无需恢复的任务")
-        return {"resumed": 0, "skipped": 0, "failed": 0}
+        total_to_resume = len(running_tasks) + len(pending_tasks)
+        if total_to_resume == 0:
+            logger.info("[resume_all_running_tasks] 无需恢复的任务")
+            return {"resumed": 0, "skipped": 0, "failed": 0}
 
-    logger.info(f"[resume_all_running_tasks] 待恢复任务: running={len(running_tasks)}, pending={len(pending_tasks)}")
+        logger.info(f"[resume_all_running_tasks] 待恢复任务: running={len(running_tasks)}, pending={len(pending_tasks)}")
 
-    result = {"resumed": 0, "skipped": 0, "failed": 0}
+        result = {"resumed": 0, "skipped": 0, "failed": 0}
 
-    # 恢复 running 任务
-    for task in running_tasks:
-        if resume_download_task(task.task_id):
-            result["resumed"] += 1
-        else:
-            result["failed"] += 1
+        # 恢复 running 任务
+        for task in running_tasks:
+            if resume_download_task(task.task_id):
+                result["resumed"] += 1
+            else:
+                result["failed"] += 1
 
-    # 恢复 pending 任务
-    for task in pending_tasks:
-        if resume_download_task(task.task_id):
-            result["resumed"] += 1
-        else:
-            result["failed"] += 1
+        # 恢复 pending 任务
+        for task in pending_tasks:
+            if resume_download_task(task.task_id):
+                result["resumed"] += 1
+            else:
+                result["failed"] += 1
 
-    logger.info(f"[resume_all_running_tasks] 恢复完成: resumed={result['resumed']}, failed={result['failed']}")
+        logger.info(f"[resume_all_running_tasks] 恢复完成: resumed={result['resumed']}, failed={result['failed']}")
 
-    return result
+        return result
+    finally:
+        _resume_lock.release()
 
 
 # ========== 断点续传可靠性增强函数 ==========
@@ -778,18 +802,37 @@ def resume_download_task_atomic(task_id: str) -> dict:
         "create_time": task.create_time if hasattr(task, 'create_time') else "",
     }
 
-    # 查找作者名称（通过 video_id → author_id → author.name）
+    # 查找作者名称 + source_author_id（通过 video_id → author_id → author）
     author_name = ""
+    source_author_id = ""
     video = db.get_author_video(task.video_id)
     if video and video.author_id:
         author = db.get_author(video.author_id)
         if author:
             author_name = author.name or ""
+            source_author_id = author.source_author_id or ""
+
+    # URL 有效性检查和刷新（微信视频 URL 会过期）
+    search_svc = SearchService()
+    url_result = search_svc.ensure_valid_url(
+        url=task.url,
+        source_author_id=source_author_id,
+        video_id=task.video_id,
+        create_time=task.create_time or task.created_at,
+        video_type=task.video_type if hasattr(task, 'video_type') else "short_video"
+    )
+    if url_result["code"] != 0:
+        logger.warning("[resume_atomic] URL 过期且刷新失败: task_id=%s, msg=%s", task_id, url_result["msg"])
+        return {"success": False, "reason": "url_expired"}
+    effective_url = url_result["data"]["url"]
+    if url_result["data"]["refreshed"]:
+        logger.info("[resume_atomic] URL 已刷新: task_id=%s", task_id)
+        db.update_video_url(task.video_id, effective_url)
 
     client = WechatVideoAPIClient()
     result = client.download_video(
         video_id=task.video_id,
-        url=task.url,
+        url=effective_url,
         title=task.title,
         spec=task.spec,
         key=task.key,
@@ -809,12 +852,11 @@ def resume_download_task_atomic(task_id: str) -> dict:
     try:
         if new_task_id != task_id:
             logger.info(f"[resume_atomic] ID变更: {task_id} -> {new_task_id}")
-            db.delete_download_task(task_id)
-
+            # 安全策略：先创建新记录，再删除旧记录（与 resume_download_task 一致）
             new_task = DownloadTask(
                 task_id=new_task_id,
                 video_id=task.video_id,
-                url=effective_url,
+                url=task.url,
                 title=task.title,
                 filename=task.filename,
                 spec=task.spec,
@@ -832,7 +874,11 @@ def resume_download_task_atomic(task_id: str) -> dict:
                 video_type=task.video_type if hasattr(task, 'video_type') else "short_video",
                 create_time=task.create_time if hasattr(task, 'create_time') else "",
             )
-            db.create_download_task(new_task)
+            created = db.create_download_task(new_task)
+            if not created:
+                logger.error("[resume_atomic] 创建新记录失败: new_id=%s, 旧记录保留", new_task_id)
+                return {"success": False, "reason": "create_failed"}
+            db.delete_download_task(task_id)
         else:
             db.update_download_task_status(task_id, "pending")
 
@@ -850,30 +896,40 @@ def resume_download_task_atomic(task_id: str) -> dict:
                 if existing:
                     db.delete_download_task(new_task_id)
 
-            # 恢复原始记录
-            original_task = DownloadTask(
-                task_id=original_task_info["task_id"],
-                video_id=original_task_info["video_id"],
-                url=original_task_info["url"],
-                title=original_task_info["title"],
-                filename=original_task_info["filename"],
-                spec=original_task_info["spec"],
-                suffix=original_task_info["suffix"],
-                key=original_task_info["key"],
-                status=original_task_info["status"],
-                progress=original_task_info["progress"],
-                downloaded=original_task_info["downloaded"],
-                total_size=original_task_info["total_size"],
-                speed=0,
-                error_msg="",
-                created_at=original_task_info["created_at"],
-                updated_at=datetime.now().isoformat(),
-                completed_at=None,
-                video_type=original_task_info["video_type"],
-                create_time=original_task_info.get("create_time", ""),
-            )
-            db.create_download_task(original_task)
-            logger.info(f"[resume_atomic] 回滚成功: {task_id}")
+            # 恢复原始记录（如果旧记录已被删除才需要重建）
+            original_exists = db.get_download_task(task_id) is not None
+            if original_exists:
+                # 旧记录还在，恢复其状态
+                db.update_download_task_status(task_id, original_task_info["status"])
+                logger.info(f"[resume_atomic] 回滚：旧记录仍在，恢复状态为 %s", original_task_info["status"])
+            else:
+                # 旧记录已被删除，需要重建
+                original_task = DownloadTask(
+                    task_id=original_task_info["task_id"],
+                    video_id=original_task_info["video_id"],
+                    url=original_task_info["url"],
+                    title=original_task_info["title"],
+                    filename=original_task_info["filename"],
+                    spec=original_task_info["spec"],
+                    suffix=original_task_info["suffix"],
+                    key=original_task_info["key"],
+                    status=original_task_info["status"],
+                    progress=original_task_info["progress"],
+                    downloaded=original_task_info["downloaded"],
+                    total_size=original_task_info["total_size"],
+                    speed=0,
+                    error_msg="",
+                    created_at=original_task_info["created_at"],
+                    updated_at=datetime.now().isoformat(),
+                    completed_at=None,
+                    video_type=original_task_info["video_type"],
+                    create_time=original_task_info.get("create_time", ""),
+                )
+                recreated = db.create_download_task(original_task)
+                if recreated:
+                    logger.info(f"[resume_atomic] 回滚：旧记录已重建: {task_id}")
+                else:
+                    logger.error(f"[resume_atomic] 回滚：旧记录重建失败（可能已存在）: {task_id}")
         except Exception as rollback_error:
             logger.error(f"[resume_atomic] 回滚失败: {rollback_error}")
 
@@ -881,33 +937,57 @@ def resume_download_task_atomic(task_id: str) -> dict:
 
 
 def resume_pending_tasks():
-    """恢复所有 pending 状态的下载任务（断点续传）
+    """恢复所有活跃状态的下载任务（断点续传）
 
-    场景：用户停止服务 → running 任务被保存为 pending → 重新启动服务后自动恢复
+    恢复 pending、running、wait 三种状态的任务。
+    先将 running/wait 转为 pending，再逐个恢复。
+
+    场景：
+    - 用户停止服务后重新启动
+    - Go 崩溃后用户手动重启
+    - 应用冷启动
     """
-    pending = db.list_download_tasks(status="pending", limit=1000)
-    resumed = 0
-    failed = 0
+    if not _resume_lock.acquire(blocking=False):
+        logger.info("[resume_pending] 已有恢复任务正在进行，跳过")
+        return {"resumed": 0, "failed": 0, "skipped": 1}
+    try:
+        # 先将 running/wait 转为 pending（保证状态统一）
+        running = db.list_download_tasks(status="running", limit=1000)
+        wait = db.list_download_tasks(status="wait", limit=1000)
+        for task in running:
+            db.update_download_task_status(task.task_id, "pending")
+        for task in wait:
+            db.update_download_task_status(task.task_id, "pending")
+        if running or wait:
+            logger.info("[resume_pending] 状态归一化: running=%d, wait=%d → pending",
+                        len(running), len(wait))
 
-    for task in pending:
-        try:
-            result = resume_download_task(task.task_id)
-            if result:
-                resumed += 1
-                logger.info("[resume_pending] 恢复任务 %s 成功", task.task_id)
-            else:
+        # 查询所有 pending 任务并恢复
+        pending = db.list_download_tasks(status="pending", limit=1000)
+        resumed = 0
+        failed = 0
+
+        for task in pending:
+            try:
+                result = resume_download_task(task.task_id)
+                if result:
+                    resumed += 1
+                    logger.info("[resume_pending] 恢复任务 %s 成功", task.task_id)
+                else:
+                    failed += 1
+                    logger.warning("[resume_pending] 恢复任务 %s 失败", task.task_id)
+            except Exception as e:
                 failed += 1
-                logger.warning("[resume_pending] 恢复任务 %s 失败", task.task_id)
-        except Exception as e:
-            failed += 1
-            logger.error("[resume_pending] 恢复任务 %s 异常: %s", task.task_id, e)
+                logger.error("[resume_pending] 恢复任务 %s 异常: %s", task.task_id, e)
 
-    # 通知前端有任务恢复
-    if resumed > 0:
-        from core.utils.event_bus import emit, TASKS_RESUMED
-        emit(TASKS_RESUMED, {"resumed": resumed, "failed": failed})
+        # 通知前端有任务恢复
+        if resumed > 0:
+            from core.utils.event_bus import emit, TASKS_RESUMED
+            emit(TASKS_RESUMED, {"resumed": resumed, "failed": failed})
 
-    return {"resumed": resumed, "failed": failed}
+        return {"resumed": resumed, "failed": failed}
+    finally:
+        _resume_lock.release()
 
 
 def resume_download_task_with_state(task_id: str) -> dict:

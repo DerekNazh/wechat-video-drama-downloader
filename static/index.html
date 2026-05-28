@@ -87,6 +87,13 @@
     </div>
   </div>
 
+  <!-- SSE 断连提示横幅 -->
+  <div class="sse-status-banner" id="sse-status-banner" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    <span>实时更新已断开，正在尝试重连...</span>
+    <button class="sse-banner-close" onclick="document.getElementById('sse-status-banner').style.display='none'" title="关闭" aria-label="关闭提示">&times;</button>
+  </div>
+
   <!-- ========== 页面容器 ========== -->
   <div class="page-container">
 
@@ -141,20 +148,7 @@
             <div class="author-stats-row">
               <span class="stat-item"><span id="authorShortVideo">0</span> 短视频</span>
               <span class="stat-item"><span id="authorReplay">0</span> 回放</span>
-              <span class="stat-item"><span id="authorDownloaded">0/0</span> 已下载</span>
-            </div>
-            <div class="author-progress-section" id="authorProgressSection">
-              <div class="author-progress-bar-wrapper">
-                <div class="author-progress-bar" id="authorProgressBar">
-                  <div class="author-progress-fill" id="authorProgressFill" style="width: 0%"></div>
-                  <div class="author-progress-shimmer" id="authorProgressShimmer"></div>
-                </div>
-              </div>
-              <div class="author-progress-info">
-                <span class="author-progress-text" id="authorProgressText">已下载 0/0 个短视频 (0%)</span>
-                <span class="author-progress-downloading" id="authorProgressDownloading"></span>
-              </div>
-            </div>
+                          </div>
           </div>
         </div>
         <div class="author-actions">
@@ -211,7 +205,7 @@
             <input type="text" id="videoSearchInput" placeholder="搜索视频..." oninput="searchVideos()">
           </div>
           <div class="view-switcher">
-            <button class="view-btn active" data-view="grid" onclick="switchView('grid')" title="网格视图">
+            <button class="view-btn" data-view="grid" onclick="switchView('grid')" title="网格视图">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                 <rect x="1" y="1" width="6" height="6" rx="1"/>
                 <rect x="9" y="1" width="6" height="6" rx="1"/>
@@ -219,7 +213,7 @@
                 <rect x="9" y="9" width="6" height="6" rx="1"/>
               </svg>
             </button>
-            <button class="view-btn" data-view="list" onclick="switchView('list')" title="列表视图">
+            <button class="view-btn active" data-view="list" onclick="switchView('list')" title="列表视图">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                 <rect x="1" y="2" width="14" height="3" rx="1"/>
                 <rect x="1" y="6.5" width="14" height="3" rx="1"/>
@@ -243,13 +237,13 @@
         <!-- 动态填充 -->
       </div>
 
-      <div class="selection-bar" id="selectionBar">
+      <div class="selection-bar" id="selectionBar" role="toolbar" aria-label="批量操作工具栏">
         <div class="selection-info">已选 <strong id="selectedCount">0</strong> 个视频</div>
         <div class="selection-actions">
-          <button class="btn-secondary" onclick="selectAllVideos()">全选</button>
-          <button class="btn-secondary" onclick="clearSelection()">清空</button>
-          <button class="btn-primary" onclick="downloadSelected()">下载</button>
-          <button class="btn-danger" onclick="deleteSelected()">删除</button>
+          <button class="btn-secondary" onclick="selectAllVideos()" aria-label="全选当前类型下所有视频">全选</button>
+          <button class="btn-secondary" onclick="clearSelection()" aria-label="取消所有选择">取消选择</button>
+          <button class="btn-primary" onclick="downloadSelected()" aria-label="下载选中视频">下载</button>
+          <button class="btn-danger" onclick="deleteSelected()" aria-label="删除选中视频">删除</button>
         </div>
       </div>
     </div>

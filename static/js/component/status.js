@@ -40,14 +40,27 @@ function updateStatusFromPoll(status) {
     _goOnline = status.service_online;
     State.service.setGoOnline(status.service_online);
 
-    // 服务离线时，将 running 任务标记为 paused
+    // 服务离线时，将 running/wait 任务标记为 paused
     if (wasOnline && !_goOnline) {
       _activeTasks = _activeTasks.map(function(t) {
-        return t.status === 'running'
+        return (t.status === 'running' || t.status === 'wait')
           ? Object.assign({}, t, { status: 'paused', speed: 0 })
           : t;
       });
       State.tasks.setAll(_activeTasks);
+      // 通知用户服务已离线
+      if (typeof showToast === 'function') {
+        var pausedCount = _activeTasks.filter(function(t) { return t.status === 'paused'; }).length;
+        var msg = 'Go 后端服务已离线';
+        if (pausedCount > 0) msg += '，' + pausedCount + ' 个下载任务已暂停';
+        showToast({ type: 'warning', title: '服务离线', message: msg });
+      }
+    }
+    // 服务恢复在线
+    if (!wasOnline && _goOnline) {
+      if (typeof showToast === 'function') {
+        showToast({ type: 'success', title: '服务恢复', message: 'Go 后端服务已重新上线' });
+      }
     }
   }
 

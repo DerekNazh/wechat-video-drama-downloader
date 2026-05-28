@@ -1,18 +1,15 @@
 // 对话框组件
-function showDeleteConfirmDialog(count, hasDownloaded, onCancel, onConfirm) {
+function showDeleteConfirmDialog(count, downloadedCount, recordOnlyCount, onCancel, onConfirm) {
   const overlay = document.createElement('div');
   overlay.className = 'dialog-overlay';
 
-  let checkboxHtml = '';
-  if (hasDownloaded) {
-    checkboxHtml = `
-      <div class="dialog-option">
-        <label>
-          <input type="checkbox" id="deleteFilesCheckbox">
-          同时删除已下载的视频文件
-        </label>
-      </div>
-    `;
+  let detailHtml = '';
+  if (downloadedCount > 0 && recordOnlyCount > 0) {
+    detailHtml = `<p class="dialog-detail">其中 <strong>${downloadedCount}</strong> 个已下载（含视频文件），<strong>${recordOnlyCount}</strong> 个仅记录。删除将同时移除视频文件和数据库记录</p>`;
+  } else if (downloadedCount > 0) {
+    detailHtml = `<p class="dialog-detail">全部已下载，删除将同时移除视频文件和数据库记录</p>`;
+  } else if (recordOnlyCount > 0) {
+    detailHtml = `<p class="dialog-detail">全部为未下载记录，仅移除数据库记录</p>`;
   }
 
   overlay.innerHTML = `
@@ -27,7 +24,7 @@ function showDeleteConfirmDialog(count, hasDownloaded, onCancel, onConfirm) {
       <div class="dialog-title">确认删除视频</div>
       <div class="dialog-content">
         <p>确定要删除选中的 <strong>${count}</strong> 个视频吗？</p>
-        ${checkboxHtml}
+        ${detailHtml}
       </div>
       <div class="dialog-buttons">
         <button class="btn-dialog secondary" id="dlgCancel">取消</button>
@@ -44,9 +41,8 @@ function showDeleteConfirmDialog(count, hasDownloaded, onCancel, onConfirm) {
   });
 
   overlay.querySelector('#dlgConfirm').addEventListener('click', () => {
-    const deleteFiles = overlay.querySelector('#deleteFilesCheckbox')?.checked || false;
     closeDialog(overlay);
-    onConfirm && onConfirm(deleteFiles);
+    onConfirm && onConfirm();
   });
 
   overlay.addEventListener('click', (e) => {

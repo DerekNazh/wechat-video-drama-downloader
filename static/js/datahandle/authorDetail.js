@@ -8,6 +8,9 @@ function initSSEListener() {
   es.onopen = function() {
     console.log('[SSE] 连接已建立');
     _sseConnected = true;
+    // 隐藏 SSE 断连提示
+    var sseBanner = document.getElementById('sse-status-banner');
+    if (sseBanner) sseBanner.style.display = 'none';
     // SSE 重连后，主动请求一次当前状态（避免缓存错误）
     fetch("/api/service/status")
       .then(r => r.json())
@@ -24,6 +27,8 @@ function initSSEListener() {
         }
       })
       .catch(() => {});
+    // SSE 重连后，刷新活跃任务列表（防止瞬断期间任务状态不同步）
+    if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
   };
 
   // 服务状态推送（Go 后端 + 微信客户端）
@@ -82,9 +87,66 @@ function initSSEListener() {
     }
   });
 
+  es.addEventListener('video_fetch_progress', function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      handleSSEVideoFetchProgress(data);
+    } catch(err) {
+      console.error('[SSE] video_fetch_progress 解析失败:', err);
+    }
+  });
+
+  es.addEventListener('tasks_resumed', function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      var resumed = data.resumed || data.count || 0;
+      var failed = data.failed || 0;
+      if (resumed > 0) {
+        // 暂停徽章 → 恢复中（过渡动画）
+        document.querySelectorAll('.video-status-badge.paused').forEach(function(badge) {
+          badge.className = 'video-status-badge resuming';
+          var pctEl = badge.querySelector('.progress-percent');
+          var pct = pctEl ? pctEl.textContent.replace('%', '').trim() : '0';
+          badge.innerHTML = '恢复中 (' + pct + '%)';
+          badge.title = '正在恢复下载...';
+          // 3s fallback: 如果进度 SSE 没来，强制刷新回 downloading
+          setTimeout(function() {
+            if (badge.classList.contains('resuming')) {
+              if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
+            }
+          }, 3000);
+        });
+        // 显示 toast（含失败数）
+        if (typeof showToast === 'function') {
+          var msg = '已恢复 ' + resumed + ' 个下载任务';
+          if (failed > 0) msg += '，' + failed + ' 个恢复失败';
+          showToast({ type: failed > 0 ? 'warning' : 'success', title: '断点续传', message: msg });
+        }
+        // 刷新活跃任务列表
+        if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
+      }
+    } catch(err) {
+      console.error('[SSE] tasks_resumed 解析失败:', err);
+    }
+  });
+
+  es.addEventListener('delete_author_progress', function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      if (typeof handleDeleteAuthorSSEProgress === 'function') {
+        handleDeleteAuthorSSEProgress(data);
+      }
+    } catch(err) {
+      console.error('[SSE] delete_author_progress 解析失败:', err);
+    }
+  });
+
   es.onerror = function(err) {
     console.warn('[SSE] 连接错误, readyState:', es.readyState);
     _sseConnected = false;
+    // 显示 SSE 断连提示
+    var sseBanner = document.getElementById('sse-status-banner');
+    if (sseBanner) sseBanner.style.display = 'flex';
     // SSE 断开时显示离线（重连后会自动恢复）
     updateStatusFromPoll({
       service_online: false,
@@ -110,15 +172,7 @@ function handleSSETaskCompleted(data) {
   console.log('[SSE][完成] 作者统计更新: %s, downloaded %s→%s, total=%s, videoId=%s',
     username, _catalogData[idx].downloaded, downloaded, total, completedVideoId);
 
-  // 1. 更新 _catalogData
-  _catalogData[idx] = {
-    ..._catalogData[idx],
-    downloaded: downloaded,
-    pending: total - downloaded,
-    progress: total > 0 ? Math.round(downloaded / total * 100) : 0,
-  };
-
-  // 2. 更新 _authorVideosData 中该视频的 downloaded 状态
+  // 1. 先更新 _authorVideosData 中该视频的 downloaded 状态
   if (completedVideoId && _authorVideosData[username]) {
     var video = _authorVideosData[username].videos[completedVideoId];
     if (video && !video.downloaded) {
@@ -129,7 +183,7 @@ function handleSSETaskCompleted(data) {
       };
       console.log('[SSE][完成] 已更新 _authorVideosData: %s downloaded=true, path=%s', completedVideoId, data.download_path || '');
 
-      // [新增] 使用 State 层更新状态（触发 ReactiveRenderer）
+      // 使用 State 层更新状态（触发 ReactiveRenderer）
       if (typeof State !== 'undefined' && State.videos && State.videos.updateStatus) {
         State.videos.updateStatus(completedVideoId, {
           downloaded: true,
@@ -139,21 +193,39 @@ function handleSSETaskCompleted(data) {
     }
   }
 
+  // 2. 从 _authorVideosData 重新计算分类统计（确保 short_video_downloaded 等字段与视频列表一致）
+  var allVideos = Object.values(_authorVideosData[username]?.videos || {});
+  var shortVideos = allVideos.filter(function(v) { return (v.video_type || 'short_video') === 'short_video'; });
+  var replays = allVideos.filter(function(v) { return v.video_type === 'live_replay'; });
+  var svDownloaded = shortVideos.filter(function(v) { return v.downloaded; }).length;
+  var rpDownloaded = replays.filter(function(v) { return v.downloaded; }).length;
+
+  _catalogData[idx] = {
+    ..._catalogData[idx],
+    downloaded: downloaded,
+    pending: total - downloaded,
+    progress: total > 0 ? Math.round(downloaded / total * 100) : 0,
+    short_video_count: shortVideos.length,
+    replay_count: replays.length,
+    short_video_downloaded: svDownloaded,
+    replay_downloaded: rpDownloaded,
+  };
+
   // 3. 更新作者卡片统计
   updateAuthorCardStats(username, _catalogData[idx]);
 
   // 4. 如果在详情页，更新头部统计 + 单个视频行渲染
   if (_currentAuthor && _currentAuthor.username === username && _currentPage === 'author') {
-    // 已下载显示 X/Y 格式：需要同时获取当前类型的总数
+    // 使用已有的 updateAuthorStatsByType 更新统计（避免引用不存在的 DOM 元素）
     var catEntry = _catalogData.find(function(c) { return c.username === username; });
     if (catEntry) {
-      var isReplay = _currentVideoType === 'live_replay';
-      var typeTotal = isReplay ? (catEntry.replay_count || 0) : (catEntry.short_video_count || 0);
-      var typeDownloaded = isReplay ? (catEntry.replay_downloaded || 0) : (catEntry.short_video_downloaded || 0);
-      document.getElementById("authorDownloaded").textContent = typeDownloaded + '/' + typeTotal;
+      updateAuthorStatsByType({
+        short_video_count: catEntry.short_video_count || 0,
+        replay_count: catEntry.replay_count || 0,
+        short_video_downloaded: catEntry.short_video_downloaded || 0,
+        replay_downloaded: catEntry.replay_downloaded || 0,
+      });
     }
-    document.getElementById("authorPending").textContent = total - downloaded;
-    document.getElementById("authorTotal").textContent = total;
 
     // 把完成的视频行从"下载中"切换为"已下载"
     if (completedVideoId && typeof updateSingleVideoCompleted === 'function') {
@@ -236,17 +308,20 @@ function handleSSETaskProgress(data) {
         var videos = _authorVideosData[username].videos;
         if (videos && videos[videoId]) {
           var video = videos[videoId];
-          if (!video.downloaded) {
-            videos[videoId] = { ...video, downloaded: true, download_path: data.download_path || video.download_path || '' };
-            console.log('[SSE][数据层] 标记视频已下载: videoId=%s, username=%s, path=%s', videoId, username, data.download_path || '');
+          // 守卫：task_completed 可能已先处理过，跳过重复更新
+          if (video.downloaded) {
+            console.log('[SSE][数据层] task_progress(done) 跳过：task_completed 已处理 videoId=%s', videoId);
+            break;
+          }
+          videos[videoId] = { ...video, downloaded: true, download_path: data.download_path || video.download_path || '' };
+          console.log('[SSE][数据层] 标记视频已下载: videoId=%s, username=%s, path=%s', videoId, username, data.download_path || '');
 
-            // [新增] 使用 State 层更新状态（触发 ReactiveRenderer）
-            if (typeof State !== 'undefined' && State.videos && State.videos.updateStatus) {
-              State.videos.updateStatus(videoId, {
-                downloaded: true,
-                download_path: data.download_path || ''
-              });
-            }
+          // [新增] 使用 State 层更新状态（触发 ReactiveRenderer）
+          if (typeof State !== 'undefined' && State.videos && State.videos.updateStatus) {
+            State.videos.updateStatus(videoId, {
+              downloaded: true,
+              download_path: data.download_path || ''
+            });
           }
           // 更新视频行UI（隐藏下载框，显示"已下载"）
           if (typeof updateSingleVideoCompleted === 'function') {
@@ -262,6 +337,12 @@ function handleSSETaskProgress(data) {
       if (typeof updateSingleVideoError === 'function') {
         updateSingleVideoError(videoId);
       }
+    }
+
+    // 2.5 终态时主动清除取消标记（防止 TTL 过期后残留消息重新插入）
+    if (typeof _cancelledTaskIds !== 'undefined' && _cancelledTaskIds[data.id]) {
+      delete _cancelledTaskIds[data.id];
+      console.log('[SSE][数据层] 终态清除取消标记: taskId=%s', data.id);
     }
 
     // 3. 刷新任务列表
@@ -309,12 +390,17 @@ function handleSSETaskProgress(data) {
     var oldPct = _activeTasks[taskIdx].percent;
     var oldStatus = _activeTasks[taskIdx].status;
 
-    // 进度合理性检查：防止异常跳跃（非完成状态下，进度跳跃超过 50% 视为异常）
-    // 如果新进度远大于旧进度，且状态不是 done/completed，可能是 Go 后端返回了错误数据
-    if (pct > oldPct + 50 && data.status !== 'done' && data.status !== 'completed' && data.status !== 'error') {
-      console.warn('[SSE][数据层] 进度跳跃异常: videoId=%s, taskId=%s, 旧进度=%s%%, 新进度=%s%%, status=%s → 忽略此更新',
-        videoId, data.id, oldPct, pct, data.status);
-      return;  // 忽略异常的进度更新
+    // 进度合理性检查：基于时间的变化率，防止后端返回错误数据
+    // 断点续传后进度可能合法跳跃，因此只在短时间跳跃过大时才视为异常
+    var now = Date.now();
+    var lastUpdate = _activeTasks[taskIdx]._lastUpdateTime || 0;
+    var elapsed = (now - lastUpdate) / 1000;
+    var maxJumpPerSecond = 30;
+    var maxJump = Math.max(50, maxJumpPerSecond * Math.max(elapsed, 1));
+    if (pct > oldPct + maxJump && data.status !== 'done' && data.status !== 'completed' && data.status !== 'error') {
+      console.warn('[SSE][数据层] 进度跳跃异常: videoId=%s, taskId=%s, 旧进度=%s%%, 新进度=%s%%, 间隔=%ss, 阈值=%s%%, status=%s → 忽略此更新',
+        videoId, data.id, oldPct, pct, elapsed.toFixed(1), maxJump, data.status);
+      return;
     }
 
     _activeTasks[taskIdx] = {
@@ -324,6 +410,7 @@ function handleSSETaskProgress(data) {
       speed: rawSpeed,
       percent: pct,
       status: data.status,
+      _lastUpdateTime: now,
     };
 
     console.log('[SSE][数据层] 更新 _activeTasks: videoId=%s, %s%%→%s%%, downloaded=%s/%s, speed=%s/s, 节流=%s',
@@ -347,8 +434,19 @@ function handleSSETaskProgress(data) {
   }, 200);
 }
 
+function handleSSEVideoFetchProgress(data) {
+  var progressCountEl = document.getElementById('syncProgressCount');
+  if (!progressCountEl) return;
+
+  if (data.phase === 'done') {
+    progressCountEl.textContent = '已获取 ' + data.current + ' 个视频';
+  } else {
+    progressCountEl.textContent = '已获取 ' + data.current + ' / ' + data.total + ' 个视频';
+  }
+}
+
 function updateAuthorCardStats(username, cat) {
-  var isListView = _currentView === 'list';
+  var isListView = State.ui.getAuthorViewMode() === 'list';
   var el = isListView
     ? document.querySelector('.author-list-item[data-username="' + username + '"]')
     : document.querySelector('.author-card[onclick*="' + username + '"]');
@@ -428,11 +526,26 @@ function updateAuthorStats(data) {
 // 加载作者详情
 async function loadAuthorDetail(username) {
   _currentPageNum = 1;
-  _currentVideoType = 'short_video'; // 重置为默认类型
+  _currentVideoType = 'short_video';
+
+  // 清空选中状态
+  if (typeof clearSelection === 'function') clearSelection();
+
+  // 清空搜索和日期过滤
+  var searchInput = document.getElementById('videoSearchInput');
+  if (searchInput) searchInput.value = '';
+  if (typeof _dateRange !== 'undefined') _dateRange = { start: null, end: null };
+  var dateLabel = document.getElementById('dateFilterLabel');
+  if (dateLabel) dateLabel.textContent = '全部日期';
 
   // 重置视频类型 Tab UI
   document.querySelectorAll('.video-type-tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.type === 'short_video');
+  });
+
+  // 重置下载状态过滤 Tab 到"全部"
+  document.querySelectorAll('.video-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.tab === 'all');
   });
 
   // [新增] 通知 ReactiveRenderer 当前视图状态
@@ -471,12 +584,15 @@ async function loadAuthorDetail(username) {
 
   console.log(`[DEBUG][loadAuthorDetail] 头部渲染: total=${cat.total || 0}, downloaded=${cat.downloaded || 0}, pending=${cat.pending || 0}`);
 
-  // 更新头部统计（使用 _catalogData 中的分类统计）
+  // 更新头部统计（从 _authorVideosData 实时计算，不依赖可能过时的 _catalogData）
+  const detailVideos = Object.values(_authorVideosData[username]?.videos || {});
+  const detailSV = detailVideos.filter(v => (v.video_type || 'short_video') === 'short_video');
+  const detailRP = detailVideos.filter(v => v.video_type === 'live_replay');
   updateAuthorStatsByType({
-    short_video_count: cat.short_video_count || 0,
-    replay_count: cat.replay_count || 0,
-    short_video_downloaded: cat.short_video_downloaded || 0,
-    replay_downloaded: cat.replay_downloaded || 0,
+    short_video_count: detailSV.length,
+    replay_count: detailRP.length,
+    short_video_downloaded: detailSV.filter(v => v.downloaded).length,
+    replay_downloaded: detailRP.filter(v => v.downloaded).length,
   });
   // 更新全局进度条
   if (typeof updateAuthorGlobalProgress === 'function') {
