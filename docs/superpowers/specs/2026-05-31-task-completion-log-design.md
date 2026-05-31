@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS task_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     video_id TEXT NOT NULL,
     author_id TEXT,
+    username TEXT,  -- 作者的 source_author_id，用于跳转（loadAuthorDetail 需要 username）
     title TEXT,
     cover_url TEXT,
     duration INTEGER DEFAULT 0,
@@ -59,6 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_task_log_video_id
 | `id` | INTEGER | 自增主键 |
 | `video_id` | TEXT | 视频唯一标识 |
 | `author_id` | TEXT | 作者ID（可为空，处理作者删除场景） |
+| `username` | TEXT | 作者的 source_author_id，用于 `loadAuthorDetail(username)` 跳转 |
 | `title` | TEXT | 视频标题 |
 | `cover_url` | TEXT | 封面URL |
 | `duration` | INTEGER | 视频时长（秒） |
@@ -68,9 +70,9 @@ CREATE INDEX IF NOT EXISTS idx_task_log_video_id
 
 ### 2.2 写入触发点
 
-**触发位置 1**: `core/monitor/socket_client.py:133`（WebSocket 推送完成）
+**触发位置 1**: `core/utils/socket_client.py`（WebSocket 推送完成）
 
-`video_info` 来源：从 `task` 对象中提取，task 对象在 `socket_client.py` 中已包含 `video_id`、`title`、`cover_url`、`duration`、`file_size` 等字段。`author_id` 从当前监控的作者上下文获取。
+在 `task_completed` 事件处理逻辑之后，添加记录写入。`task` 对象包含 `video_id`、`title`、`cover_url`、`duration`、`file_size` 等字段，`author_id` 从当前监控上下文获取。
 
 ```python
 # 在 task_completed 事件处理后
@@ -80,9 +82,9 @@ except Exception as e:
     logger.warning(f"记录任务完成失败: {e}")
 ```
 
-**触发位置 2**: `core/service/task.py:149`（HTTP 轮询完成）
+**触发位置 2**: `core/service/task.py`（HTTP 轮询完成）
 
-`video_info` 来源：`task` 对象本身已包含所需字段，无需额外查询。
+在 `emit_task_completed` 调用之后，添加记录写入。`task` 对象本身已包含所需字段，无需额外查询。
 
 ```python
 # 在状态更新为 completed/done 后
@@ -96,15 +98,30 @@ except Exception as e:
 
 ```python
 def _log_task_completion(task: dict) -> None:
-    """记录任务完成（非阻塞）"""
-    with get_connection() as conn:
-        conn.execute("""
+    """记录任务完成（非阻塞）
+    
+    task 字段说明：
+    - video_id, title, cover_url, duration, file_size: 从 download_tasks 表获取
+    - author_id: 从 download_tasks 表获取
+    - username: 需额外查询 authors.source_author_id（loadAuthorDetail 需要 username）
+    """
+    db = get_database()  # 获取 DatabaseBase 实例
+    # 查询 username（authors.source_author_id）
+    username = ''
+    if task.get('author_id'):
+        author = db.get_author(task['author_id'])
+        if author:
+            username = author.source_author_id or ''
+    
+    with db._cursor() as cursor:
+        cursor.execute("""
             INSERT OR IGNORE INTO task_log 
-            (video_id, author_id, title, cover_url, duration, file_size, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (video_id, author_id, username, title, cover_url, duration, file_size, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task.get('video_id'),
             task.get('author_id', ''),
+            username,
             task.get('title', ''),
             task.get('cover_url', ''),
             task.get('duration', 0),
@@ -126,8 +143,9 @@ def _log_task_completion(task: dict) -> None:
 ```python
 def _cleanup_old_logs() -> None:
     """清理过期记录"""
-    with get_connection() as conn:
-        conn.execute("""
+    db = get_database()
+    with db._cursor() as cursor:
+        cursor.execute("""
             DELETE FROM task_log 
             WHERE created_at < datetime('now', '-7 days', 'localtime')
         """)
@@ -156,6 +174,7 @@ def _cleanup_old_logs() -> None:
         "id": 1,
         "video_id": "xxx",
         "author_id": "author_xxx",
+        "username": "author_source_id_xxx",
         "author_name": "作者名",
         "title": "视频标题",
         "cover_url": "https://...",
@@ -172,16 +191,16 @@ def _cleanup_old_logs() -> None:
 
 ```sql
 SELECT 
-    tl.id, tl.video_id, tl.author_id, 
-    COALESCE(av.author_name, '') as author_name,
+    tl.id, tl.video_id, tl.author_id, tl.username,
+    COALESCE(a.name, '') as author_name,
     tl.title, tl.cover_url, tl.duration, tl.file_size, tl.completed_at
 FROM task_log tl
-LEFT JOIN author_videos av ON tl.author_id = av.author_id
+LEFT JOIN authors a ON tl.author_id = a.id
 ORDER BY tl.completed_at DESC
 LIMIT ? OFFSET ?
 ```
 
-**注意**: 不依赖认证状态，未登录用户也可查看历史记录。
+**注意**: `authors` 表的作者名称字段为 `name`（非 `author_name`），`author_id` 对应 `authors.id`。不依赖认证状态，未登录用户也可查看历史记录。
 
 ---
 
@@ -236,7 +255,8 @@ LIMIT ? OFFSET ?
 - < 7 天: "N 天前"
 
 **点击行为**:
-- 点击历史记录项 → 跳转到对应作者页面（如果作者存在）
+- 点击历史记录项 → 调用 `loadAuthorDetail(username)` 跳转到对应作者页面（`loadAuthorDetail` 定义在 `authorDetail.js:705`，接收 `username` 参数）
+- 需要在 `task_log` 表中额外存储 `username`（`authors.source_author_id`），因为 `loadAuthorDetail` 需要 username 而非 author_id
 - 作者已删除 → 显示 toast 提示"作者已移除"
 
 **空状态**:
@@ -283,6 +303,34 @@ function showTaskCompletionToast(videoTitle) {
 - SSE `onopen` 时懒加载 `State.logs`
 - 与 `refreshActiveTasks()` 并行执行
 
+**State.logs 表模块** (`static/js/api/state/tables/logs.js`):
+
+遵循现有 tables/ 模式（authors.js, videos.js, tasks.js），使用 `./db.js` 提供的 `find, where, all, on, off, emit` 操作：
+
+```javascript
+// static/js/api/state/tables/logs.js
+var _logs = [];
+var _total = 0;
+
+function getItems() { return _logs; }
+function getTotal() { return _total; }
+
+function setLogs(data) {
+  _logs = data.items || [];
+  _total = data.total || 0;
+  emit('logs:updated', { items: _logs, total: _total });
+}
+
+export { getItems, getTotal, setLogs };
+```
+
+在 `static/js/api/state/index.js` 中导出为 `State.logs`：
+
+```javascript
+import * as logs from './tables/logs.js';
+State.logs = logs;
+```
+
 ```javascript
 // static/js/datahandle/authorDetail.js
 es.onopen = function() {
@@ -290,8 +338,7 @@ es.onopen = function() {
   refreshActiveTasks();
   
   // 新增：懒加载历史记录
-  if (!State.logs) {
-    State.logs = { items: [], total: 0 };
+  if (State.logs.getTotal() === 0) {
     fetchCompletionLog();
   }
 };
@@ -307,12 +354,14 @@ case 'task_completed':
   // 现有逻辑...
   
   // 新增：刷新历史记录
-  if (State.logs) {
+  if (State.logs.getTotal() > 0) {
     fetchCompletionLog(8);
   }
   
-  // Toast 合并
-  showTaskCompletionToast(e.data.title);
+  // Toast 合并（SSE task_completed 事件不含 title，从 State.videos 获取）
+  var completedVideo = State.videos.getVideo(e.data.video_id);
+  var videoTitle = completedVideo ? completedVideo.title : '';
+  showTaskCompletionToast(videoTitle);
   break;
 ```
 
@@ -321,14 +370,15 @@ case 'task_completed':
 ```javascript
 // static/js/api/task.js
 async function fetchCompletionLog(limit = 50, offset = 0) {
-  const res = await fetch(`/api/task/completion-log?limit=${limit}&offset=${offset}`);
-  const data = await res.json();
-  if (data.code === 0) {
-    State.logs = {
-      items: data.data.items,
-      total: data.data.total
-    };
-    renderHistoryList();
+  try {
+    const res = await fetch(`/api/task/completion-log?limit=${limit}&offset=${offset}`);
+    const data = await res.json();
+    if (data.code === 0) {
+      State.logs.setLogs(data.data);
+      renderHistoryList();
+    }
+  } catch (e) {
+    console.warn('获取下载记录失败:', e);
   }
 }
 ```
@@ -337,6 +387,32 @@ async function fetchCompletionLog(limit = 50, offset = 0) {
 
 **组件位置**: `static/js/component/historyPanel.js`（新文件）
 
+**工具函数**（添加到 `static/js/utils/date.js`）:
+
+```javascript
+/**
+ * 相对时间格式化
+ * @param {string} isoTime - ISO 8601 时间字符串
+ * @returns {string} 相对时间文本
+ */
+function formatRelativeTime(isoTime) {
+  if (!isoTime) return '';
+  var now = Date.now();
+  var then = new Date(isoTime).getTime();
+  if (isNaN(then)) return '';
+  var diff = now - then;
+  var seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return '刚刚';
+  var minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + ' 分钟前';
+  var hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + ' 小时前';
+  var days = Math.floor(hours / 24);
+  if (days < 7) return days + ' 天前';
+  return formatDate(isoTime);
+}
+```
+
 **渲染函数**:
 
 ```javascript
@@ -344,7 +420,7 @@ function renderHistoryList() {
   const container = document.getElementById('historyList');
   if (!container) return;
   
-  const items = State.logs?.items || [];
+  const items = State.logs.getItems() || [];
   
   if (items.length === 0) {
     container.innerHTML = '<div class="history-empty">暂无下载记录</div>';
@@ -352,7 +428,7 @@ function renderHistoryList() {
   }
   
   container.innerHTML = items.map(item => `
-    <div class="history-item" data-author-id="${item.author_id}" onclick="navigateToAuthor('${item.author_id}')">
+    <div class="history-item" data-author-id="${item.author_id}" onclick="if('${item.username}')loadAuthorDetail('${item.username}');else showToast({type:'warning',title:'提示',message:'作者已移除'})">
       <img class="history-cover" src="${item.cover_url || ''}" alt="${item.title}">
       <div class="history-info">
         <div class="history-title">${escapeHtml(item.title)}</div>
@@ -452,15 +528,16 @@ function renderHistoryList() {
 
 | 文件 | 改动类型 | 说明 |
 |------|----------|------|
-| `core/db/schema.py` | 修改 | 添加 `task_log` 表定义 |
-| `core/monitor/socket_client.py` | 修改 | 添加完成记录写入调用 |
+| `core/utils/database/base.py` | 修改 | 在 `_init_db()` 中添加 `task_log` 表定义 |
+| `core/utils/socket_client.py` | 修改 | 添加完成记录写入调用 |
 | `core/service/task.py` | 修改 | 添加完成记录写入调用 + 清理调度 |
 | `core/api/routers/task.py` | 修改 | 添加 `/api/task/completion-log` 端点 |
 | `static/js/api/task.js` | 修改 | 添加 `fetchCompletionLog()` |
 | `static/js/component/historyPanel.js` | 新建 | 历史面板渲染组件 |
 | `static/js/component/toast.js` | 修改 | 添加 Toast 批量合并逻辑 |
 | `static/js/datahandle/authorDetail.js` | 修改 | SSE 事件处理 + State.logs 初始化 |
-| `static/js/api/state/index.js` | 修改 | 添加 `State.logs` 定义 |
+| `static/js/api/state/tables/logs.js` | 新建 | logs 表模块（遵循现有 tables/ 模式） |
+| `static/js/api/state/index.js` | 修改 | 导出 `State.logs` 表接口 |
 | `static/index.html` | 修改 | 添加历史标签页 HTML 结构 |
 | `static/css/styles.css` | 修改 | 添加历史面板样式 |
 
