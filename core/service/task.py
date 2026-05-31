@@ -153,20 +153,21 @@ class TaskService:
                     if progress > 0:
                         db.update_download_task_progress(task_id, progress, downloaded, total_size, speed)
 
-                    # 记录任务完成（非阻塞）
+                    # 记录任务完成（非阻塞，防止双触发点重复写入）
                     try:
                         from core.utils.database import get_database
                         _db = get_database()
-                        _video_rec = _db.get_author_video(local_task.video_id)
-                        _author_id = _video_rec.author_id if _video_rec else ''
-                        _username = ''
-                        if _author_id:
-                            _author = _db.get_author(_author_id)
-                            _username = _author.source_author_id if _author else ''
-                        _db.log_task_completion(
-                            video_id=local_task.video_id,
-                            author_id=_author_id,
-                            username=_username,
+                        if not _db.has_recent_log(local_task.video_id, 60):
+                            _video_rec = _db.get_author_video(local_task.video_id)
+                            _author_id = _video_rec.author_id if _video_rec else ''
+                            _username = ''
+                            if _author_id:
+                                _author = _db.get_author(_author_id)
+                                _username = _author.source_author_id if _author else ''
+                            _db.log_task_completion(
+                                video_id=local_task.video_id,
+                                author_id=_author_id,
+                                username=_username,
                             title=local_task.title,
                             cover_url=_video_rec.cover_url if _video_rec else '',
                             duration=_video_rec.duration if _video_rec else 0,

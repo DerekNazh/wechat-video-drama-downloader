@@ -139,11 +139,12 @@ class DownloadProgressListener:
             except Exception as e:
                 logger.debug(f"[WS] 终态处理异常(非致命): {e}")
 
-            # 记录任务完成（非阻塞）
+            # 记录任务完成（非阻塞，防止双触发点重复写入）
             try:
                 from core.utils.database import get_database
                 _db = get_database()
-                _video_rec = _db.get_author_video(video_id)
+                if not _db.has_recent_log(video_id, 60):
+                    _video_rec = _db.get_author_video(video_id)
                 _author_id = _video_rec.author_id if _video_rec else ''
                 _username = ''
                 if _author_id:

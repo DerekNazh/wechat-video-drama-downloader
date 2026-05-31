@@ -443,6 +443,11 @@ class Database(DatabaseBase):
 
     # ========== 任务完成记录 ==========
 
+    def has_recent_log(self, video_id: str, within_seconds: int = 60) -> bool:
+        """检查 video_id 是否在指定秒数内已有完成记录"""
+        with self._cursor() as cursor:
+            return self._log_dao.has_recent_log(cursor, video_id, within_seconds)
+
     def log_task_completion(
         self, video_id: str, author_id: str = "",
         username: str = "", title: str = "",

@@ -9,6 +9,21 @@ logger = logging.getLogger("log_dao")
 class LogDAO:
     """任务完成记录 CRUD 操作"""
 
+    def has_recent_log(self, cursor, video_id: str, within_seconds: int = 60) -> bool:
+        """检查 video_id 是否在指定秒数内已有完成记录（防止双触发点重复写入）"""
+        try:
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM task_log
+                WHERE video_id = ? AND completed_at > datetime('now', ? || ' seconds', 'localtime')
+                """,
+                (video_id, str(-within_seconds)),
+            )
+            return cursor.fetchone()[0] > 0
+        except Exception as e:
+            logger.error(f"[has_recent_log] 异常: video_id={video_id}, error={e}")
+            return False
+
     def insert_log(
         self, cursor, video_id: str, author_id: str = "",
         username: str = "", title: str = "",
