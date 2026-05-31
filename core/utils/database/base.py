@@ -199,6 +199,7 @@ from core.utils.database.crud.models import Author, AuthorVideo, DownloadTask
 from core.utils.database.crud.author_dao import AuthorDAO
 from core.utils.database.crud.video_dao import VideoDAO
 from core.utils.database.crud.task_dao import TaskDAO
+from core.utils.database.crud.log_dao import LogDAO
 
 
 class Database(DatabaseBase):
@@ -212,6 +213,7 @@ class Database(DatabaseBase):
         self._author_dao = AuthorDAO()
         self._video_dao = VideoDAO()
         self._task_dao = TaskDAO()
+        self._log_dao = LogDAO()
 
     # ========== 作者操作 ==========
 
@@ -438,6 +440,39 @@ class Database(DatabaseBase):
             )
             cursor.execute("DELETE FROM resume_states WHERE task_id = ?", (task_id,))
             return True
+
+    # ========== 任务完成记录 ==========
+
+    def log_task_completion(
+        self, video_id: str, author_id: str = "",
+        username: str = "", title: str = "",
+        cover_url: str = "", duration: int = 0,
+        file_size: int = 0, completed_at: str = ""
+    ) -> bool:
+        """记录任务完成"""
+        with self._cursor() as cursor:
+            if not completed_at:
+                from datetime import datetime
+                completed_at = datetime.now().isoformat()
+            return self._log_dao.insert_log(
+                cursor, video_id, author_id, username, title,
+                cover_url, duration, file_size, completed_at
+            )
+
+    def get_task_logs(self, limit: int = 50, offset: int = 0) -> list:
+        """查询任务完成记录"""
+        with self._cursor() as cursor:
+            return self._log_dao.query_logs(cursor, limit, offset)
+
+    def count_task_logs(self) -> int:
+        """统计任务完成记录数量"""
+        with self._cursor() as cursor:
+            return self._log_dao.count_logs(cursor)
+
+    def cleanup_task_logs(self, days: int = 7) -> int:
+        """清理旧任务完成记录"""
+        with self._cursor() as cursor:
+            return self._log_dao.cleanup_old_logs(cursor, days)
 
 
 # ========== 单例模式 ==========
