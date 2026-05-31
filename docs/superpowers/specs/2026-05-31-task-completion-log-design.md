@@ -100,18 +100,31 @@ except Exception as e:
 def _log_task_completion(task: dict) -> None:
     """记录任务完成（非阻塞）
     
-    task 字段说明：
-    - video_id, title, cover_url, duration, file_size: 从 download_tasks 表获取
-    - author_id: 从 download_tasks 表获取
-    - username: 需额外查询 authors.source_author_id（loadAuthorDetail 需要 username）
+    task 字段说明（来自 DownloadTask dataclass）：
+    - video_id, title, filename, spec, suffix, progress, downloaded, total_size, speed
+    - 注意：DownloadTask 没有 author_id 字段，需通过 video_id → author_videos 关联查询
+    - cover_url, duration: 从 author_videos 表获取（DownloadTask 无此字段）
+    - author_id, username: 通过 video_id → author_videos.author_id → authors.source_author_id 关联查询
     """
     db = get_database()  # 获取 DatabaseBase 实例
-    # 查询 username（authors.source_author_id）
+    video_id = task.get('video_id', '')
+    author_id = ''
     username = ''
-    if task.get('author_id'):
-        author = db.get_author(task['author_id'])
-        if author:
-            username = author.source_author_id or ''
+    cover_url = ''
+    duration = 0
+    
+    # 通过 video_id 关联查询 author_videos 获取 author_id、cover_url、duration
+    if video_id:
+        video = db.get_author_video(video_id)
+        if video:
+            author_id = video.author_id or ''
+            cover_url = video.cover_url or ''
+            duration = video.duration or 0
+            # 通过 author_id 查询 authors 获取 username（source_author_id）
+            if author_id:
+                author = db.get_author(author_id)
+                if author:
+                    username = author.source_author_id or ''
     
     with db._cursor() as cursor:
         cursor.execute("""
@@ -119,13 +132,13 @@ def _log_task_completion(task: dict) -> None:
             (video_id, author_id, username, title, cover_url, duration, file_size, completed_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            task.get('video_id'),
-            task.get('author_id', ''),
+            video_id,
+            author_id,
             username,
             task.get('title', ''),
-            task.get('cover_url', ''),
-            task.get('duration', 0),
-            task.get('file_size', 0),
+            cover_url,
+            duration,
+            task.get('total_size', 0),  # DownloadTask 用 total_size 而非 file_size
             datetime.now().isoformat()
         ))
 ```
@@ -312,7 +325,7 @@ function showTaskCompletionToast(videoTitle) {
 var _logs = [];
 var _total = 0;
 
-function getItems() { return _logs; }
+function all() { return _logs; }
 function getTotal() { return _total; }
 
 function setLogs(data) {
@@ -321,7 +334,7 @@ function setLogs(data) {
   emit('logs:updated', { items: _logs, total: _total });
 }
 
-export { getItems, getTotal, setLogs };
+export { all, getTotal, setLogs };
 ```
 
 在 `static/js/api/state/index.js` 中导出为 `State.logs`：
@@ -359,7 +372,9 @@ case 'task_completed':
   }
   
   // Toast 合并（SSE task_completed 事件不含 title，从 State.videos 获取）
-  var completedVideo = State.videos.getVideo(e.data.video_id);
+  // State.videos.get(username, videoId) 需两参数，先用 getAuthorByVideoId 获取 username
+  var _username = State.videos.getAuthorByVideoId(e.data.video_id);
+  var completedVideo = _username ? State.videos.get(_username, e.data.video_id) : null;
   var videoTitle = completedVideo ? completedVideo.title : '';
   showTaskCompletionToast(videoTitle);
   break;
@@ -420,7 +435,7 @@ function renderHistoryList() {
   const container = document.getElementById('historyList');
   if (!container) return;
   
-  const items = State.logs.getItems() || [];
+  const items = State.logs.all() || [];
   
   if (items.length === 0) {
     container.innerHTML = '<div class="history-empty">暂无下载记录</div>';
