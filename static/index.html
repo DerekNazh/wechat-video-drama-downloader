@@ -58,6 +58,11 @@
       </svg>
     </button>
     <div class="status-drawer-body" id="drawerBody">
+      <div class="drawer-tabs">
+        <button class="drawer-tab active" id="drawerTabStatus" onclick="switchDrawerTab('status')">状态</button>
+        <button class="drawer-tab" id="drawerTabHistory" onclick="switchDrawerTab('history')">历史</button>
+      </div>
+      <div id="drawerStatusContent">
       <div class="status-detail">
         <span class="stat-chip"><span class="stat-label">今日新增</span><span class="stat-num" id="txtTodayCount">0</span></span>
         <span class="status-sep"></span>
@@ -83,6 +88,14 @@
           <span class="dot" id="dotMonitor"></span>
           <span class="status-text" id="txtMonitor">已停止</span>
         </span>
+      </div>
+      </div>
+      <div id="drawerHistoryContent" style="display:none">
+        <div class="history-panel">
+          <div id="historyList">
+            <div class="history-empty">暂无下载记录</div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -858,6 +871,7 @@
 <script src="/static/js/component/monitorButton.js"></script>
 <script src="/static/js/component/settings.js"></script>
 <script src="/static/js/component/splash.js"></script>
+<script src="/static/js/component/historyPanel.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>
