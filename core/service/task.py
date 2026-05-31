@@ -152,6 +152,28 @@ class TaskService:
                     db.update_download_task_status(task_id, status, completed_at=completed_at)
                     if progress > 0:
                         db.update_download_task_progress(task_id, progress, downloaded, total_size, speed)
+
+                    # 记录任务完成（非阻塞）
+                    try:
+                        from core.utils.database import get_database
+                        _db = get_database()
+                        _video_rec = _db.get_author_video(local_task.video_id)
+                        _author_id = _video_rec.author_id if _video_rec else ''
+                        _username = ''
+                        if _author_id:
+                            _author = _db.get_author(_author_id)
+                            _username = _author.source_author_id if _author else ''
+                        _db.log_task_completion(
+                            video_id=local_task.video_id,
+                            author_id=_author_id,
+                            username=_username,
+                            title=local_task.title,
+                            cover_url=_video_rec.cover_url if _video_rec else '',
+                            duration=_video_rec.duration if _video_rec else 0,
+                            file_size=local_task.total_size or 0,
+                        )
+                    except Exception as _le:
+                        logger.debug(f"记录完成日志失败(非致命): {_le}")
                 else:
                     # 文件不存在：标记为 failed，不设置 completed_at
                     logger.error(f"[get_task_progress] Go报done但文件不存在: task_id={task_id}, path={full_path}")
@@ -160,9 +182,8 @@ class TaskService:
                     error_msg = "文件不存在：Go后端报done但磁盘无对应文件"
             else:
                 # 非 done 状态：正常更新进度
-                # Go 后端的 wait 表示排队中，映射为 pending 保持一致
-                mapped_status = "pending" if status == "wait" else status
-                db.update_download_task_status(task_id, mapped_status, completed_at=None)
+                # Go 后端的 wait 表示排队中（等待并发槽位），保留原状态与 paused 区分
+                db.update_download_task_status(task_id, status, completed_at=None)
                 if progress > 0:
                     db.update_download_task_progress(task_id, progress, downloaded, total_size, speed)
 
@@ -208,7 +229,7 @@ class TaskService:
 
         result = []
         for task in tasks:
-            if task.status not in ["pending", "running", "wait"]:
+            if task.status not in ["pending", "running", "wait", "failed"]:
                 continue
 
             # 跟 Go 后端同步实时进度
@@ -225,7 +246,7 @@ class TaskService:
                 logger.warning(f"[get_downloading_tasks] 同步后任务消失: task_id={task.task_id}")
                 continue
 
-            if updated.status in ["pending", "running", "wait"]:
+            if updated.status in ["pending", "running", "wait", "failed"]:
                 result.append(self._task_to_dict(updated))
             elif updated.status in ("done", "completed"):
                 # 同步后刚完成的任务：返回给前端展示 100% 进度
@@ -414,6 +435,12 @@ class TaskService:
         清理方式：标记为 cancelled（保留记录），而非删除。
         注意：pending 任务不清理，它们可能是刚恢复的断点续传任务。
         """
+        # 如果 resume 正在进行，跳过 cleanup 避免误杀中间状态的任务
+        if not _resume_lock.acquire(blocking=False):
+            logger.info("[cleanup_stale] resume 正在进行，跳过清理")
+            return {"cleaned": 0, "skipped": True}
+        _resume_lock.release()
+
         import core.utils.database as db_module
         import requests as http_requests
 
@@ -583,6 +610,7 @@ def resume_download_task(task_id: str) -> bool:
     )
     if url_result["code"] != 0:
         logger.warning("[resume] URL 过期且刷新失败: task_id=%s, msg=%s", task_id, url_result["msg"])
+        db.update_download_task_status(task_id, "failed")
         return False
     effective_url = url_result["data"]["url"]
     if url_result["data"]["refreshed"]:
@@ -942,6 +970,9 @@ def resume_pending_tasks():
     恢复 pending、running、wait 三种状态的任务。
     先将 running/wait 转为 pending，再逐个恢复。
 
+    前置条件：Go 服务在线 + 微信已连接。
+    如果微信未连接，任务保持 pending 状态，等待微信连接后由 MonitorService 触发恢复。
+
     场景：
     - 用户停止服务后重新启动
     - Go 崩溃后用户手动重启
@@ -950,7 +981,14 @@ def resume_pending_tasks():
     if not _resume_lock.acquire(blocking=False):
         logger.info("[resume_pending] 已有恢复任务正在进行，跳过")
         return {"resumed": 0, "failed": 0, "skipped": 1}
+
     try:
+        # 前置条件检查：微信必须已连接（视频 URL 刷新依赖微信）
+        client = WechatVideoAPIClient()
+        if not client.check_wechat_connected():
+            logger.warning("[resume_pending] 微信未连接，跳过恢复。任务保持 pending 状态，等待微信连接后自动恢复。")
+            return {"resumed": 0, "failed": 0, "skipped": 0, "reason": "wechat_not_connected"}
+
         # 先将 running/wait 转为 pending（保证状态统一）
         running = db.list_download_tasks(status="running", limit=1000)
         wait = db.list_download_tasks(status="wait", limit=1000)
@@ -964,28 +1002,66 @@ def resume_pending_tasks():
 
         # 查询所有 pending 任务并恢复
         pending = db.list_download_tasks(status="pending", limit=1000)
+
+        # 过滤掉 progress=100% 的任务（已下载完成但状态未更新，直接标记为 done）
+        for task in pending:
+            if task.progress >= 100:
+                db.update_download_task_status(task.task_id, "done")
+                logger.info("[resume_pending] 任务 %s progress=100%%，直接标记为 done", task.task_id)
+        pending = [t for t in pending if t.progress < 100]
+
         resumed = 0
         failed = 0
+        failed_details = []
 
         for task in pending:
             try:
+                # 防止重复创建：检查同一 video_id 是否已有 running/wait 任务
+                existing = db.get_download_task_by_video_id(task.video_id)
+                if existing and existing.task_id != task.task_id and existing.status in ("running", "wait"):
+                    logger.info("[resume_pending] 跳过重复任务: video_id=%s, 已有 running 任务 %s",
+                                task.video_id, existing.task_id)
+                    # 清理这条过时的 pending 记录
+                    db.delete_download_task(task.task_id)
+                    continue
+
                 result = resume_download_task(task.task_id)
                 if result:
                     resumed += 1
                     logger.info("[resume_pending] 恢复任务 %s 成功", task.task_id)
                 else:
                     failed += 1
-                    logger.warning("[resume_pending] 恢复任务 %s 失败", task.task_id)
+                    detail = {
+                        "video_id": task.video_id,
+                        "title": task.title or "",
+                        "task_id": task.task_id,
+                        "progress": task.progress,
+                    }
+                    failed_details.append(detail)
+                    logger.warning("[resume_pending] 恢复任务 %s 失败: video_id=%s, title=%s",
+                                   task.task_id, task.video_id, task.title)
             except Exception as e:
                 failed += 1
+                detail = {
+                    "video_id": task.video_id if task else "",
+                    "title": task.title if task else "",
+                    "task_id": task.task_id if task else "",
+                    "progress": task.progress if task else 0,
+                    "error": str(e),
+                }
+                failed_details.append(detail)
                 logger.error("[resume_pending] 恢复任务 %s 异常: %s", task.task_id, e)
 
-        # 通知前端有任务恢复
-        if resumed > 0:
+        # 通知前端有任务恢复（包含失败详情）
+        if resumed > 0 or failed > 0:
             from core.utils.event_bus import emit, TASKS_RESUMED
-            emit(TASKS_RESUMED, {"resumed": resumed, "failed": failed})
+            emit(TASKS_RESUMED, {
+                "resumed": resumed,
+                "failed": failed,
+                "failed_details": failed_details,
+            })
 
-        return {"resumed": resumed, "failed": failed}
+        return {"resumed": resumed, "failed": failed, "failed_details": failed_details}
     finally:
         _resume_lock.release()
 
