@@ -90,7 +90,8 @@
   <!-- SSE 断连提示横幅 -->
   <div class="sse-status-banner" id="sse-status-banner" style="display:none">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-    <span>实时更新已断开，正在尝试重连...</span>
+    <span id="sse-banner-text">实时更新已断开</span>
+    <span class="sse-reconnect-timer" id="sse-reconnect-timer"></span>
     <button class="sse-banner-close" onclick="document.getElementById('sse-status-banner').style.display='none'" title="关闭" aria-label="关闭提示">&times;</button>
   </div>
 
@@ -231,6 +232,11 @@
             </button>
           </div>
         </div>
+      </div>
+
+      <div class="offline-banner" id="offlineBanner" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="offlineBannerText">Go 服务离线，下载已暂停</span>
       </div>
 
       <div class="video-list" id="videoList">
@@ -812,6 +818,7 @@
 <script src="/static/js/api/state/tables/authors.js"></script>
 <script src="/static/js/api/state/tables/videos.js"></script>
 <script src="/static/js/api/state/tables/tasks.js"></script>
+<script src="/static/js/api/state/tables/logs.js"></script>
 <script src="/static/js/api/state/db.js"></script>
 <script src="/static/js/api/state/ui.js"></script>
 <script src="/static/js/api/state/service.js"></script>
@@ -833,6 +840,7 @@
 <script src="/static/js/component/status.js"></script>
 <script src="/static/js/component/authorGridRender.js"></script>
 <script src="/static/js/component/homeSearchFilter.js"></script>
+<script src="/static/js/component/batchProgressDialog.js"></script>
 <script src="/static/js/component/videoListRender.js"></script>
 <script src="/static/js/component/pagination.js"></script>
 <script src="/static/js/component/view.js"></script>
