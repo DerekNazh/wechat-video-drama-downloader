@@ -1,4 +1,5 @@
 // 作者详情页数据处理
+var _sseReconnectInterval = null;
 
 // SSE 监听：实时更新作者下载统计
 function initSSEListener() {
@@ -6,9 +7,26 @@ function initSSEListener() {
 
   es.onopen = function() {
     _sseConnected = true;
-    // 隐藏 SSE 断连提示
+    // 停止 fallback 轮询（SSE 已恢复）
+    if (_fallbackPollInterval) {
+      clearInterval(_fallbackPollInterval);
+      _fallbackPollInterval = null;
+    }
+    // 停止重连倒计时
+    if (_sseReconnectInterval) {
+      clearInterval(_sseReconnectInterval);
+      _sseReconnectInterval = null;
+    }
+    // 显示"已恢复"提示，2s 后隐藏横幅
+    var textEl = document.getElementById('sse-banner-text');
+    var timerEl = document.getElementById('sse-reconnect-timer');
+    if (textEl) textEl.textContent = '实时更新已恢复';
+    if (timerEl) timerEl.textContent = '';
     var sseBanner = document.getElementById('sse-status-banner');
-    if (sseBanner) sseBanner.style.display = 'none';
+    setTimeout(function() {
+      if (sseBanner) sseBanner.style.display = 'none';
+      if (textEl) textEl.textContent = '实时更新已断开'; // 重置文字
+    }, 2000);
     // SSE 重连后，主动请求一次当前状态（避免缓存错误）
     fetch("/api/service/status")
       .then(r => r.json())
@@ -22,11 +40,58 @@ function initSSEListener() {
             today_downloaded: s.data.today_downloaded || 0,
             total_videos: s.data.total_videos || 0,
           });
+          // 状态更新后触发新视频同步（需要 Go 在线）
+          if (typeof pollNewVideos === 'function') {
+            pollNewVideos();
+          }
         }
       })
       .catch(() => {});
     // SSE 重连后，刷新活跃任务列表（防止瞬断期间任务状态不同步）
-    if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
+    // 同时检测是否有任务从 pending → running（弥补可能丢失的 tasks_resumed SSE 事件）
+    if (typeof refreshActiveTasks === 'function') {
+      var _preResumePending = _activeTasks.filter(function(t) {
+        return t.status === 'pending' || t.status === 'paused' || t.status === 'wait';
+      }).map(function(t) { return t.video_id; });
+      refreshActiveTasks().then(function() {
+        var _resumedIds = _preResumePending.filter(function(vid) {
+          var task = State.tasks.get(vid);
+          return task && (task.status === 'running' || task.status === 'wait');
+        });
+        if (_resumedIds.length > 0) {
+          if (typeof showToast === 'function') {
+            showToast({ type: 'success', title: '断点续传', message: '已恢复 ' + _resumedIds.length + ' 个下载任务' });
+          }
+          // 触发 badge 过渡：paused/waiting → resuming（不动 .downloading）
+          var container = document.getElementById('videoList');
+          if (container) {
+            _resumedIds.forEach(function(vid) {
+              var row = container.querySelector('.video-row[data-id="' + vid + '"]');
+              if (!row) return;
+              var badge = row.querySelector('.video-status-badge.paused, .video-status-badge.waiting');
+              if (badge) {
+                badge.className = 'video-status-badge resuming';
+                badge.textContent = '恢复中';
+                badge.title = '正在恢复下载...';
+              }
+            });
+          }
+        }
+        // 不调用 updateVideoListIncremental — 它会覆盖刚设的 resuming badge
+        // refreshActiveTasks 已更新 State，后续 SSE task_progress 会自然更新 badge
+      });
+    } else {
+      // refreshActiveTasks 不可用时，全量同步作为 fallback
+      if (typeof loadAllDataFromBackend === 'function') {
+        loadAllDataFromBackend();
+      }
+    }
+    // 懒加载历史记录
+    if (State.logs && State.logs.getTotal() === 0) {
+      if (typeof fetchCompletionLog === 'function') {
+        fetchCompletionLog();
+      }
+    }
   };
 
   // 服务状态推送（Go 后端 + 微信客户端）
@@ -93,33 +158,71 @@ function initSSEListener() {
   });
 
   es.addEventListener('tasks_resumed', function(e) {
+    // tasks_resumed 到达 → 停止 refreshActiveTasks 的 5s 重试
+    _taskResumeRetryCount = MAX_TASK_RESUME_RETRIES;
+    if (_taskResumeRetryTimer) {
+      clearTimeout(_taskResumeRetryTimer);
+      _taskResumeRetryTimer = null;
+    }
+
     try {
       var data = JSON.parse(e.data);
       var resumed = data.resumed || data.count || 0;
       var failed = data.failed || 0;
-      if (resumed > 0) {
-        // 暂停徽章 → 恢复中（过渡动画）
-        document.querySelectorAll('.video-status-badge.paused').forEach(function(badge) {
-          badge.className = 'video-status-badge resuming';
-          var pctEl = badge.querySelector('.progress-percent');
-          var pct = pctEl ? pctEl.textContent.replace('%', '').trim() : '0';
-          badge.innerHTML = '恢复中 (' + pct + '%)';
-          badge.title = '正在恢复下载...';
-          // 3s fallback: 如果进度 SSE 没来，强制刷新回 downloading
-          setTimeout(function() {
-            if (badge.classList.contains('resuming')) {
-              if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
-            }
-          }, 3000);
+      var failedDetails = data.failed_details || [];
+
+      console.log('[断点续传] 恢复结果: 成功=%d, 失败=%d', resumed, failed);
+      if (failedDetails.length > 0) {
+        console.group('[断点续传] 失败任务详情:');
+        failedDetails.forEach(function(d) {
+          console.warn('  video_id=%s, title="%s", progress=%s%%, error=%s',
+            d.video_id || '', d.title || '', d.progress || 0, d.error || 'URL刷新失败或Go创建任务失败');
         });
-        // 显示 toast（含失败数）
-        if (typeof showToast === 'function') {
-          var msg = '已恢复 ' + resumed + ' 个下载任务';
-          if (failed > 0) msg += '，' + failed + ' 个恢复失败';
-          showToast({ type: failed > 0 ? 'warning' : 'success', title: '断点续传', message: msg });
+        console.groupEnd();
+      }
+
+      if (resumed > 0 || failed > 0) {
+        if (typeof refreshActiveTasks === 'function') {
+          refreshActiveTasks().then(function() {
+            // 只对暂停/等待中的 badge 做恢复过渡，不动已在下载的
+            var container = document.getElementById('videoList');
+            if (container) {
+              container.querySelectorAll('.video-status-badge.paused, .video-status-badge.waiting').forEach(function(badge) {
+                var row = badge.closest('.video-row');
+                if (!row) return;
+                var videoId = row.getAttribute('data-id');
+                var task = State.tasks.get(videoId);
+                // 只转换已恢复的任务（pending/paused → running/wait）
+                if (task && (task.status === 'running' || task.status === 'wait')) {
+                  badge.className = 'video-status-badge resuming';
+                  badge.textContent = '恢复中';
+                  badge.title = '正在恢复下载...';
+                }
+              });
+            }
+            if (typeof showToast === 'function') {
+              var msg = '已恢复 ' + resumed + ' 个下载任务';
+              if (failed > 0) msg += '，' + failed + ' 个恢复失败';
+              showToast({ type: failed > 0 ? 'warning' : 'success', title: '断点续传', message: msg });
+            }
+            // 对恢复失败的任务标记 failed badge
+            if (failedDetails.length > 0) {
+              var container2 = document.getElementById('videoList');
+              if (container2) {
+                failedDetails.forEach(function(d) {
+                  if (!d.video_id) return;
+                  var row = container2.querySelector('.video-row[data-id="' + d.video_id + '"]');
+                  if (!row) return;
+                  var badge = row.querySelector('.video-status-badge');
+                  if (!badge) return;
+                  badge.className = 'video-status-badge failed';
+                  badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + d.video_id + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+                  badge.title = '恢复下载失败';
+                });
+              }
+            }
+          });
         }
-        // 刷新活跃任务列表
-        if (typeof refreshActiveTasks === 'function') refreshActiveTasks();
       }
     } catch(err) {
       console.error('[SSE] tasks_resumed 解析失败:', err);
@@ -140,14 +243,37 @@ function initSSEListener() {
   es.onerror = function(err) {
     console.warn('[SSE] 连接错误, readyState:', es.readyState);
     _sseConnected = false;
-    // 显示 SSE 断连提示
+    // 显示 SSE 断连提示 + 倒计时
     var sseBanner = document.getElementById('sse-status-banner');
     if (sseBanner) sseBanner.style.display = 'flex';
+    var textEl = document.getElementById('sse-banner-text');
+    if (textEl) textEl.textContent = '实时更新已断开';
+    // 启动重连倒计时
+    if (_sseReconnectInterval) clearInterval(_sseReconnectInterval);
+    var timerEl = document.getElementById('sse-reconnect-timer');
+    var countdown = 5;
+    if (timerEl) timerEl.textContent = countdown + 's';
+    _sseReconnectInterval = setInterval(function() {
+      countdown--;
+      if (countdown <= 0) {
+        clearInterval(_sseReconnectInterval);
+        _sseReconnectInterval = null;
+        if (timerEl) timerEl.textContent = '';
+      } else {
+        if (timerEl) timerEl.textContent = countdown + 's';
+      }
+    }, 1000);
     // SSE 断开时显示离线（重连后会自动恢复）
     updateStatusFromPoll({
       service_online: false,
       wechat_connected: false,
     });
+    // 启动 fallback 轮询（SSE 断开时每 10s 轮询一次状态）
+    if (!_fallbackPollInterval) {
+      _fallbackPollInterval = setInterval(function() {
+        if (typeof pollServiceStatus === 'function') pollServiceStatus();
+      }, 10000);
+    }
   };
 }
 
@@ -229,8 +355,8 @@ function handleSSETaskCompleted(data) {
   }
 
   // 5. 从 _activeTasks 移除已完成任务
-  _activeTasks = _activeTasks.filter(function(t) { return t.video_id !== completedVideoId; });
-  State.tasks.setAll(_activeTasks);
+  State.tasks.removeByVideoId(completedVideoId);
+  _activeTasks = State.tasks.all();
 
   // 5.1 清除该视频的节流定时器，防止延迟的进度更新覆盖终态 UI
   if (_progressThrottleTimers[completedVideoId]) {
@@ -246,6 +372,66 @@ function handleSSETaskCompleted(data) {
       total_videos: data.total_videos,
     });
   }
+
+  // 刷新历史记录
+  if (State.logs && State.logs.getTotal() > 0) {
+    if (typeof fetchCompletionLog === 'function') {
+      fetchCompletionLog(8);
+    }
+  }
+
+  // Toast 批量合并（SSE task_completed 事件不含 title，从 State.videos 获取）
+  var _username = State.videos.getAuthorByVideoId(data.video_id);
+  var _video = _username ? State.videos.get(_username, data.video_id) : null;
+  var _title = _video ? _video.title : '';
+  if (typeof showTaskCompletionToast === 'function') {
+    showTaskCompletionToast(_title);
+  }
+}
+
+function showResumeTransition(videoId, fromPercent, toPercent) {
+  var row = document.querySelector('.video-row[data-id="' + videoId + '"]');
+  if (!row) return;
+
+  var badge = row.querySelector('.video-status-badge');
+  if (!badge) return;
+
+  // 先闪烁 badge 让用户感知到"恢复了"
+  badge.style.transition = 'opacity 0.3s';
+  badge.style.opacity = '0.5';
+  setTimeout(function() {
+    badge.style.opacity = '1';
+    setTimeout(function() { badge.style.transition = ''; }, 300);
+  }, 150);
+
+  var start = fromPercent || 0;
+  var end = toPercent || 0;
+
+  // 进度完全相同，只做闪烁就够了
+  if (start === end) return;
+
+  // 进度条动画：不管升降都播放过渡（Go 重启后 resume，进度可能跳跃）
+  var fill = badge.querySelector('.progress-fill') || badge.querySelector('.paused-fill');
+  var pctEl = badge.querySelector('.progress-percent');
+  if (!fill || !pctEl) return;
+
+  var duration = 500;
+  var startTime = null;
+
+  function animate(timestamp) {
+    if (!startTime) startTime = timestamp;
+    var elapsed = timestamp - startTime;
+    var progress = Math.min(elapsed / duration, 1);
+    var eased = 1 - (1 - progress) * (1 - progress);
+    var current = start + (end - start) * eased;
+    fill.style.width = current + '%';
+    pctEl.textContent = Math.round(current) + '%';
+    if (progress < 1) {
+      requestAnimationFrame(animate);
+    }
+  }
+
+  requestAnimationFrame(animate);
 }
 
 // SSE 实时进度节流
@@ -267,11 +453,17 @@ function handleSSETaskProgress(data) {
     return;
   }
 
-  // 通过 _activeTasks 的 task_id → video_id 映射获取正确的 videoId
-  // SSE 消息中的 video_id 可能为空（Go后端直播回放缺少 labels.id），不能直接用
   var existingTask = _activeTasks.find(function(t) { return t.id === taskId; });
   var videoId = existingTask ? existingTask.video_id : (data.video_id || '');
   if (!videoId) return;
+
+  if (!existingTask && videoId) {
+    var byVideoId = _activeTasks.find(function(t) { return t.video_id === videoId; });
+    if (byVideoId) {
+      State.tasks.update(videoId, { id: taskId });
+      _activeTasks = State.tasks.all();
+    }
+  }
 
 
   // 完成/错误 → 全量刷新 + 更新视频行UI
@@ -285,8 +477,8 @@ function handleSSETaskProgress(data) {
 
     // 1. 从 _activeTasks 移除已完成任务（使用 taskId 精确匹配，避免误删其他任务）
     var taskId = data.id;
-    _activeTasks = _activeTasks.filter(function(t) { return t.id !== taskId; });
-    State.tasks.setAll(_activeTasks);
+    State.tasks.removeByVideoId(videoId);
+    _activeTasks = State.tasks.all();
 
     // 2. 标记视频为已下载 + 更新视频行UI
     if (data.status === 'done' && videoId) {
@@ -357,43 +549,55 @@ function handleSSETaskProgress(data) {
   }
 
   if (taskIdx < 0) {
-    _activeTasks.push({
+    var newTask = {
       id: taskId,
-      video_id: videoId,  // 使用从 _activeTasks 映射或 data.video_id 获取的正确 videoId
+      video_id: videoId,
       status: data.status,
       percent: pct,
       downloaded: rawDownloaded,
       size: rawSize,
       speed: rawSpeed,
-    });
-    State.tasks.setAll(_activeTasks);
-    taskIdx = _activeTasks.length - 1;
+    };
+    State.tasks.update(videoId, newTask);
+    _activeTasks = State.tasks.all();
+    taskIdx = _activeTasks.findIndex(function(t) { return t.video_id === videoId; });
   } else {
     var oldPct = _activeTasks[taskIdx].percent;
     var oldStatus = _activeTasks[taskIdx].status;
 
     // 进度合理性检查：基于时间的变化率，防止后端返回错误数据
     // 断点续传后进度可能合法跳跃，因此只在短时间跳跃过大时才视为异常
+    // 从 0% 起步的首次非零进度始终合法（任务创建后首次 SSE 可能就是 50%+）
     var now = Date.now();
     var lastUpdate = _activeTasks[taskIdx]._lastUpdateTime || 0;
     var elapsed = (now - lastUpdate) / 1000;
     var maxJumpPerSecond = 30;
     var maxJump = Math.max(50, maxJumpPerSecond * Math.max(elapsed, 1));
+    if (oldPct === 0) maxJump = Math.max(maxJump, pct);
     if (pct > oldPct + maxJump && data.status !== 'done' && data.status !== 'completed' && data.status !== 'error') {
       console.warn('[SSE][数据层] 进度跳跃异常: videoId=%s, taskId=%s, 旧进度=%s%%, 新进度=%s%%, 间隔=%ss, 阈值=%s%%, status=%s → 忽略此更新',
         videoId, data.id, oldPct, pct, elapsed.toFixed(1), maxJump, data.status);
       return;
     }
 
-    _activeTasks[taskIdx] = {
-      ..._activeTasks[taskIdx],
+    var existingStateTask = State.tasks.get(videoId);
+    if (existingStateTask && existingStateTask._taskIdChanged && existingStateTask._oldPercent !== undefined) {
+      var fromPercent = existingStateTask._oldPercent;
+      var toPercent = pct || 0;
+      showResumeTransition(videoId, fromPercent, toPercent);
+      State.tasks.update(videoId, { _taskIdChanged: false, _oldPercent: undefined });
+    }
+
+    State.tasks.update(videoId, {
+      id: taskId,
       downloaded: rawDownloaded,
       size: rawSize,
       speed: rawSpeed,
       percent: pct,
       status: data.status,
       _lastUpdateTime: now,
-    };
+    });
+    _activeTasks = State.tasks.all();
 
   }
 
@@ -414,12 +618,29 @@ function handleSSETaskProgress(data) {
 
 function handleSSEVideoFetchProgress(data) {
   var progressCountEl = document.getElementById('syncProgressCount');
+  var progressTextEl = document.getElementById('syncProgressText');
   if (!progressCountEl) return;
 
-  if (data.phase === 'done') {
-    progressCountEl.textContent = '已获取 ' + data.current + ' 个视频';
-  } else {
-    progressCountEl.textContent = '已获取 ' + data.current + ' / ' + data.total + ' 个视频';
+  var phase = data.phase || 'fetching';
+
+  if (phase === 'start') {
+    if (progressTextEl) progressTextEl.textContent = '正在拉取视频列表...';
+    progressCountEl.textContent = '准备中...';
+  } else if (phase === 'fetching') {
+    // 拉取阶段：total 可能为 null（逐页拉取，总数未知）
+    if (data.total) {
+      progressCountEl.textContent = '已获取 ' + data.current + ' / ' + data.total + ' 个视频';
+    } else {
+      progressCountEl.textContent = '已扫描 ' + data.current + ' 个视频';
+    }
+    if (progressTextEl && data.name) progressTextEl.textContent = data.name;
+  } else if (phase === 'saving') {
+    // 入库阶段：用 i+1/total 显示入库进度
+    progressCountEl.textContent = '入库 ' + data.current + ' / ' + data.total + ' 个（新增 ' + (data.added || 0) + '）';
+    if (progressTextEl) progressTextEl.textContent = '正在入库: ' + (data.name || '');
+  } else if (phase === 'done') {
+    progressCountEl.textContent = '已完成，新增 ' + data.current + ' 个视频';
+    if (progressTextEl) progressTextEl.textContent = '同步完成';
   }
 }
 
@@ -506,6 +727,14 @@ async function loadAuthorDetail(username) {
   _currentPageNum = 1;
   _currentVideoType = 'short_video';
 
+  // 清除所有节流定时器（防止切换作者后旧定时器操作已移除的 DOM）
+  Object.keys(_progressThrottleTimers).forEach(function(key) {
+    if (_progressThrottleTimers[key]) {
+      clearTimeout(_progressThrottleTimers[key]);
+    }
+  });
+  _progressThrottleTimers = {};
+
   // 清空选中状态
   if (typeof clearSelection === 'function') clearSelection();
 
@@ -591,6 +820,7 @@ async function loadAuthorDetail(username) {
         headers: { 'Content-Type': 'application/json' },
       });
       if (!res.ok) {
+        // 503 = Go/微信未就绪，静默跳过
       } else {
         const data = await res.json();
 
@@ -623,7 +853,7 @@ async function loadAuthorDetail(username) {
         }
       }
     } catch(e) {
-      console.error('[DEBUG][loadAuthorDetail] 增量同步失败:', e);
+      // 增量同步失败，静默忽略
     }
   } else {
     // Go 不在线且本地无视频，显示空状态
