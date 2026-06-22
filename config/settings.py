@@ -70,7 +70,7 @@ class _EnvConfig:
     # ===== 短剧嗅探服务配置（res_download） =====
     res_port: int = 8899              # res_download HTTP 端口
     res_upstream_port: int = 2023     # 上游代理端口（weixin_download 内部代理）
-    res_auto_proxy: bool = True       # 启动时自动开启系统代理
+    res_auto_proxy: bool = False      # 启动时自动开启系统代理（默认关闭，需手动在设置中开启）
 
     # 广告开关
     ads_enabled: bool = True          # 广告总开关
@@ -497,7 +497,7 @@ class SettingsManager:
             # 短剧嗅探服务配置
             res_port=int(os.getenv("RES_PORT", "8899")),
             res_upstream_port=int(os.getenv("RES_UPSTREAM_PORT", "2023")),
-            res_auto_proxy=os.getenv("RES_AUTO_PROXY", "true").lower() == "true",
+            res_auto_proxy=os.getenv("RES_AUTO_PROXY", "false").lower() == "true",
 
             ads_enabled=os.getenv("ADS_ENABLED", "true").lower() == "true",
             pywebview_debug=os.getenv("PYWEBVIEW_DEBUG", "false").lower() == "true",

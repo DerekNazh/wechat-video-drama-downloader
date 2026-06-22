@@ -296,7 +296,12 @@ def _wait_for_system_proxy(max_wait: int = 60) -> None:
 
     WebView2 内核在 webview.start() 时读取系统代理设置，
     运行中修改注册表不会自动刷新，所以必须在启动前确保代理已设置。
+    仅在 res_auto_proxy=True 时执行。
     """
+    if not settings.res_auto_proxy:
+        logger.info("[代理] 自动开启代理已禁用，跳过")
+        return
+
     from core.utils.res_download_service import ResDownloadService
 
     svc = ResDownloadService()
@@ -313,12 +318,11 @@ def _wait_for_system_proxy(max_wait: int = 60) -> None:
         return
 
     # 开启系统代理
-    if settings.res_auto_proxy:
-        success = svc.open_proxy()
-        if success:
-            logger.info("[代理] 系统代理已开启 (127.0.0.1:8899)")
-        else:
-            logger.warning("[代理] 系统代理开启失败，短剧嗅探可能不工作")
+    success = svc.open_proxy()
+    if success:
+        logger.info("[代理] 系统代理已开启 (127.0.0.1:8899)")
+    else:
+        logger.warning("[代理] 系统代理开启失败，短剧嗅探可能不工作")
 
 
 # ==================== 主入口 ====================
