@@ -373,7 +373,7 @@ def run_gui():
                     logger.error(f"[webview] 监控器关闭异常: {e}")
 
                 try:
-                    # 2. 停止 Go 后端服务
+                    # 2. 停止 weixin_download 后端服务
                     from core.utils.base_servier import WechatVideoService
                     svc = WechatVideoService()
                     if svc.is_process_running():
@@ -384,6 +384,21 @@ def run_gui():
                         logger.info("[webview] 微信视频号后端服务未运行，无需停止")
                 except Exception as e:
                     logger.error(f"[webview] Go 后端服务停止异常: {e}")
+
+                try:
+                    # 3. 停止 res_download 短剧嗅探服务
+                    from core.utils.res_download_service import ResDownloadService
+                    res_svc = ResDownloadService()
+                    if res_svc.is_process_running():
+                        logger.info("[webview] 正在停止 res_download 短剧嗅探服务...")
+                        res_svc.unset_proxy()
+                        res_svc.stop()
+                        logger.info("[webview] res_download 已停止")
+                    else:
+                        logger.info("[webview] res_download 未运行，仅清理系统代理")
+                        res_svc.unset_proxy()
+                except Exception as e:
+                    logger.error(f"[webview] res_download 停止异常: {e}")
 
                 try:
                     # 3. 清除系统代理（应用退出后不应残留代理设置）

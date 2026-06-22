@@ -67,6 +67,11 @@ class _EnvConfig:
     max_concurrent: int = 5            # 最大并发下载数
     doc_sync_interval: int = 60       # 腾讯文档监控轮询间隔（分钟）
 
+    # ===== 短剧嗅探服务配置（res_download） =====
+    res_port: int = 8899              # res_download HTTP 端口
+    res_upstream_port: int = 2023     # 上游代理端口（weixin_download 内部代理）
+    res_auto_proxy: bool = True       # 启动时自动开启系统代理
+
     # 广告开关
     ads_enabled: bool = True          # 广告总开关
 
@@ -293,6 +298,25 @@ class SettingsManager:
             return self.app_root / "lib" / "wx_video_download.exe"
         return self.app_root / "weixin_exe" / "wx_video_download.exe"
 
+    @property
+    def res_exe_path(self) -> Path:
+        """获取 res_download.exe 路径"""
+        if self._is_frozen:
+            return self.app_root / "lib" / "res_download.exe"
+        return self.app_root / "res_download" / "res_download.exe"
+
+    @property
+    def res_work_dir(self) -> Path:
+        """获取 res_download.exe 工作目录"""
+        if self._is_frozen:
+            return self.app_root / "lib"
+        return self.app_root / "res_download"
+
+    @property
+    def res_api_url(self) -> str:
+        """获取 res_download API 基地址"""
+        return f"http://127.0.0.1:{self._config.res_port}"
+
     def _init_sys_path(self):
         """初始化 sys.path - 添加项目根目录和 core 目录"""
         app_root_str = str(self.app_root)
@@ -469,6 +493,12 @@ class SettingsManager:
             wx_download_dir=os.getenv("WX_DOWNLOAD_DIR", "下载"),
             max_concurrent=int(os.getenv("MAX_CONCURRENT", "5")),
             doc_sync_interval=int(os.getenv("DOC_SYNC_INTERVAL", "60")),
+
+            # 短剧嗅探服务配置
+            res_port=int(os.getenv("RES_PORT", "8899")),
+            res_upstream_port=int(os.getenv("RES_UPSTREAM_PORT", "2023")),
+            res_auto_proxy=os.getenv("RES_AUTO_PROXY", "true").lower() == "true",
+
             ads_enabled=os.getenv("ADS_ENABLED", "true").lower() == "true",
             pywebview_debug=os.getenv("PYWEBVIEW_DEBUG", "false").lower() == "true",
         )
@@ -518,6 +548,15 @@ class SettingsManager:
 
     @property
     def pywebview_debug(self): return self._config.pywebview_debug
+
+    @property
+    def res_port(self): return self._config.res_port
+
+    @property
+    def res_upstream_port(self): return self._config.res_upstream_port
+
+    @property
+    def res_auto_proxy(self): return self._config.res_auto_proxy
 
     @max_concurrent.setter
     def max_concurrent(self, value: int):

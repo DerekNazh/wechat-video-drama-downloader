@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from core.api.routers import video, search, inputer, monitor, player, task, base_service, sse, leader, config, author
+from core.api.routers import video, search, inputer, monitor, player, task, base_service, sse, leader, config, author, sniff_proxy
 
 logger = logging.getLogger("app")
 
@@ -82,7 +82,10 @@ def _startup_sequence():
     except Exception as e:
         logger.warning(f"清理过期记录失败: {e}")
 
-    # 3. 启动 Go 后端
+    # 3. 启动 res_download（短剧嗅探服务，必须先于 weixin_download）
+    _auto_start_res_download()
+
+    # 4. 启动 weixin_download（视频号后端）
     _auto_start_go_backend()
 
     # 4. 恢复待处理任务（断点续传：重新创建 Go 下载任务）
@@ -175,6 +178,40 @@ def _start_progress_listener_with_event_bus():
             time.sleep(5)
 
 
+def _auto_start_res_download():
+    """启动 res_download 短剧嗅探服务
+
+    启动序列：
+    1. 启动 res_download.exe
+    2. 等待就绪 + 注入配置
+    3. 开启系统代理
+    """
+    try:
+        from core.utils.res_download_service import ResDownloadService
+
+        svc = ResDownloadService()
+
+        if svc.is_running():
+            logger.info("[启动] res_download 已在运行，先停止...")
+            svc.stop()
+
+        logger.info("[启动] 自动启动 res_download 短剧嗅探服务...")
+        success = svc.start(wait_seconds=30)
+        if success:
+            logger.info("[启动] res_download 启动成功")
+        else:
+            logger.warning("[启动] res_download 启动失败，短剧嗅探功能不可用")
+            return
+
+        # 启动后开启系统代理
+        if settings.res_auto_proxy:
+            svc.open_proxy()
+            logger.info("[启动] 系统代理已开启")
+
+    except Exception as e:
+        logger.warning(f"[启动] 自动启动 res_download 异常: {e}")
+
+
 def _auto_start_go_backend():
     """后台线程：自动启动 Go 后端服务
 
@@ -204,7 +241,7 @@ def _auto_start_go_backend():
 
 
 def _shutdown_sequence():
-    """关闭序列"""
+    """关闭序列（反向：先关 weixin_download，再关 res_download）"""
     global _orphan_cleaner
 
     logger.info("[关闭] 开始关闭组件...")
@@ -215,6 +252,33 @@ def _shutdown_sequence():
     if _orphan_cleaner:
         _orphan_cleaner.stop()
         logger.info("[关闭] 孤立任务清理器已停止")
+
+    # 关闭 weixin_download
+    try:
+        from core.utils.base_servier import WechatVideoService
+        svc = WechatVideoService()
+        if svc.is_process_running():
+            logger.info("[关闭] 正在停止 weixin_download...")
+            svc.stop()
+            logger.info("[关闭] weixin_download 已停止")
+    except Exception as e:
+        logger.error(f"[关闭] weixin_download 停止异常: {e}")
+
+    # 关闭 res_download（含系统代理清理）
+    try:
+        from core.utils.res_download_service import ResDownloadService
+        svc = ResDownloadService()
+        if svc.is_process_running():
+            logger.info("[关闭] 正在停止 res_download...")
+            # 先关闭系统代理
+            svc.unset_proxy()
+            svc.stop()
+            logger.info("[关闭] res_download 已停止")
+        else:
+            logger.info("[关闭] res_download 未在运行，仅清理系统代理")
+            svc.unset_proxy()
+    except Exception as e:
+        logger.error(f"[关闭] res_download 停止异常: {e}")
 
     logger.info("[关闭] 所有组件已关闭")
 
@@ -272,6 +336,7 @@ app.include_router(base_service.router)
 app.include_router(sse.router)
 app.include_router(leader.router)
 app.include_router(config.router)
+app.include_router(sniff_proxy.router)
 
 # 静态文件目录（使用 settings.app_root 兼容打包和开发模式）
 from config.settings import settings
