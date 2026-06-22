@@ -25,6 +25,7 @@ logs/
 # Data
 data/*.db
 data/*.sqlite
+下载/
 
 # OS
 Thumbs.db

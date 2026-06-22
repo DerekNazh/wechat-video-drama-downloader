@@ -289,6 +289,38 @@ def run_fastapi_in_thread(host: str, port: int, ready_event: threading.Event) ->
     return t
 
 
+# ==================== 系统代理等待 ====================
+
+def _wait_for_system_proxy(max_wait: int = 60) -> None:
+    """等待 res_download 启动完成并开启系统代理
+
+    WebView2 内核在 webview.start() 时读取系统代理设置，
+    运行中修改注册表不会自动刷新，所以必须在启动前确保代理已设置。
+    """
+    from core.utils.res_download_service import ResDownloadService
+
+    svc = ResDownloadService()
+
+    # 等待 res_download HTTP 就绪
+    logger.info("[代理] 等待 res_download 服务就绪...")
+    for i in range(max_wait):
+        if svc.is_running():
+            logger.info("[代理] res_download 已就绪 (等待 %d 秒)", i + 1)
+            break
+        time.sleep(1)
+    else:
+        logger.warning("[代理] res_download 等待超时，跳过系统代理设置")
+        return
+
+    # 开启系统代理
+    if settings.res_auto_proxy:
+        success = svc.open_proxy()
+        if success:
+            logger.info("[代理] 系统代理已开启 (127.0.0.1:8899)")
+        else:
+            logger.warning("[代理] 系统代理开启失败，短剧嗅探可能不工作")
+
+
 # ==================== 主入口 ====================
 
 def run_gui():
@@ -341,6 +373,10 @@ def run_gui():
         )
         _window_ref["window"] = window
         logger.info(f"[webview] 窗口创建成功，URL: {base_url}")
+
+        # 在 webview.start() 之前等待系统代理设置完成
+        # WebView2 内核启动时读取代理设置，运行中改注册表不会刷新
+        _wait_for_system_proxy()
 
         _shutdown_done = threading.Event()
 
@@ -399,29 +435,6 @@ def run_gui():
                         res_svc.unset_proxy()
                 except Exception as e:
                     logger.error(f"[webview] res_download 停止异常: {e}")
-
-                try:
-                    # 3. 清除系统代理（应用退出后不应残留代理设置）
-                    proxy_key = winreg.HKEY_CURRENT_USER
-                    proxy_path = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
-                    with winreg.OpenKey(proxy_key, proxy_path, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
-                        try:
-                            enabled, _ = winreg.QueryValueEx(key, 'ProxyEnable')
-                            logger.info("[webview] 当前 ProxyEnable=%s", enabled)
-                            if enabled != 0:
-                                winreg.SetValueEx(key, 'ProxyEnable', 0, winreg.REG_DWORD, 0)
-                                logger.info("[webview] 已将系统代理 ProxyEnable 置为 0")
-                            else:
-                                logger.info("[webview] ProxyEnable 已为 0，无需修改")
-                        except OSError as e:
-                            logger.warning("[webview] 读取/写入 ProxyEnable 失败: %s", e)
-                        try:
-                            winreg.DeleteValue(key, 'ProxyServer')
-                            logger.info("[webview] 已清除系统代理 ProxyServer")
-                        except OSError:
-                            pass
-                except Exception as e:
-                    logger.error(f"[webview] 清除系统代理异常: {e}")
 
                 _shutdown_done.set()
                 logger.info("[webview] 清理完成，退出进程")

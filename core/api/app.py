@@ -203,10 +203,8 @@ def _auto_start_res_download():
             logger.warning("[启动] res_download 启动失败，短剧嗅探功能不可用")
             return
 
-        # 启动后开启系统代理
-        if settings.res_auto_proxy:
-            svc.open_proxy()
-            logger.info("[启动] 系统代理已开启")
+        # 注意：系统代理不在后台线程开启，而是在 gui.py 的 _wait_for_system_proxy()
+        # 中于 webview.start() 之前开启，因为 WebView2 启动时才读取代理设置
 
     except Exception as e:
         logger.warning(f"[启动] 自动启动 res_download 异常: {e}")
