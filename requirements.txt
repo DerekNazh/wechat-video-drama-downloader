@@ -1,14 +1,41 @@
-fastapi
-uvicorn[standard]
-pywebview
-python-dotenv
-pyyaml
-httpx
-requests
-openai
-pillow
-opencv-python
-scikit-learn
-python-multipart
-websocket-client
-typer[all]
+# 核心框架
+fastapi==0.136.0
+uvicorn[standard]==0.44.0
+starlette==1.0.0
+
+# GUI
+pywebview==6.2.1
+pythonnet==3.0.5
+
+# HTTP
+httpx==0.28.1
+requests==2.33.1
+websocket-client==1.9.0
+
+# 配置/日志
+python-dotenv==1.2.2
+PyYAML==6.0.3
+pydantic==2.13.1
+
+# 数据处理
+pillow==12.2.0
+opencv-python==4.13.0.92
+numpy==2.4.4
+scikit-learn==1.8.0
+
+# 数据库
+peewee==4.0.5
+
+# 文件处理
+python-multipart==0.0.26
+openpyxl==3.1.5
+
+# AI
+openai==2.32.0
+
+# CLI
+typer[all]==0.25.1
+
+# 开发/打包
+pyinstaller==6.19.0
+playwright==1.58.0
