@@ -62,8 +62,14 @@
   }
 
   function update(videoId, patch) {
+    if (!videoId) return;
     var task = _tasks.get(videoId);
-    if (!task) return;
+    if (!task) {
+      // 新任务：SSE 推送了未在 State 中的任务，用 setAll 创建
+      var newTask = Object.assign({ video_id: videoId }, patch);
+      setAll([newTask]);
+      return;
+    }
     var updated = {};
     for (var k in task) { if (task.hasOwnProperty(k)) updated[k] = task[k]; }
     for (var k in patch) { if (patch.hasOwnProperty(k)) updated[k] = patch[k]; }

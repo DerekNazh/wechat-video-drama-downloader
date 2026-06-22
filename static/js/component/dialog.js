@@ -52,18 +52,27 @@ function showDeleteConfirmDialog(count, downloadedCount, recordOnlyCount, onCanc
     }
   });
 
-  const escHandler = (e) => {
+  var escHandler = (e) => {
     if (e.key === 'Escape') {
       closeDialog(overlay);
       onCancel && onCancel();
-      document.removeEventListener('keydown', escHandler);
     }
   };
+  overlay._escHandler = escHandler;
   document.addEventListener('keydown', escHandler);
 }
 
 function closeDialog(el) {
-  el.remove();
+  if (!el || el.classList.contains('closing')) return;
+  // 清理 Escape 键监听器
+  if (el._escHandler) {
+    document.removeEventListener('keydown', el._escHandler);
+    el._escHandler = null;
+  }
+  var dialogBox = el.querySelector('.dialog-box');
+  el.classList.add('closing');
+  if (dialogBox) dialogBox.classList.add('closing');
+  setTimeout(function() { el.remove(); }, 200);
 }
 
 function showDownloadRangeDialog(options, onConfirm) {
@@ -156,11 +165,11 @@ function showDownloadRangeDialog(options, onConfirm) {
     if (e.target === overlay) closeDialog(overlay);
   });
 
-  const escHandler = (e) => {
+  var escHandler = (e) => {
     if (e.key === 'Escape') {
       closeDialog(overlay);
-      document.removeEventListener('keydown', escHandler);
     }
   };
+  overlay._escHandler = escHandler;
   document.addEventListener('keydown', escHandler);
 }

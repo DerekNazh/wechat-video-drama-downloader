@@ -10,7 +10,7 @@ function getDownloadingCountForCurrentType() {
     if (!video) return false;
     var videoType = video.video_type || 'short_video';
     var videoAuthor = State.videos.getAuthorByVideoId(t.video_id);
-    return videoType === _currentVideoType && videoAuthor === _currentAuthor.username;
+    return videoType === _currentVideoType && videoAuthor === (_currentAuthor?.username || '');
   }).length;
 }
 
@@ -18,7 +18,7 @@ function getDownloadingCountForCurrentType() {
 function updateAuthorGlobalProgress() {
   if (!_currentAuthor) return;
   var cat = _catalogData.find(function(c) {
-    return c.username === _currentAuthor.username;
+    return c.username === (_currentAuthor?.username || '');
   });
   if (!cat) return;
 

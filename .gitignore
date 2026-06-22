@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+build/
+*.spec
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Data
+data/*.db
+data/*.sqlite
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude
+.claude/
+.superpowers/
+.pytest_cache/
+
+# Go binary logs
+weixin_exe/app.log
+weixin_exe/gopeed.db

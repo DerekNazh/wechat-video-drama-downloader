@@ -157,30 +157,79 @@ class TaskService:
                     try:
                         from core.utils.database import get_database
                         _db = get_database()
-                        if not _db.has_recent_log(local_task.video_id, 60):
+                        has_recent = _db.has_recent_log(local_task.video_id, 60)
+                        logger.info(f"[Task] 完成日志检查: video_id={local_task.video_id}, has_recent_log(60s)={has_recent}")
+                        if not has_recent:
                             _video_rec = _db.get_author_video(local_task.video_id)
                             _author_id = _video_rec.author_id if _video_rec else ''
                             _username = ''
                             if _author_id:
                                 _author = _db.get_author(_author_id)
                                 _username = _author.source_author_id if _author else ''
-                            _db.log_task_completion(
+                            _title = local_task.title or (_video_rec.title if _video_rec else '')
+                            _cover_url = _video_rec.cover_url if _video_rec else ''
+                            _duration = _video_rec.duration if _video_rec else 0
+                            _file_size = local_task.total_size or 0
+                            logger.info(f"[Task] 写入完成日志: video_id={local_task.video_id}, author_id={_author_id}, "
+                                        f"username={_username}, title={_title[:40]}, file_size={_file_size}")
+                            result = _db.log_task_completion(
                                 video_id=local_task.video_id,
                                 author_id=_author_id,
                                 username=_username,
-                            title=local_task.title,
-                            cover_url=_video_rec.cover_url if _video_rec else '',
-                            duration=_video_rec.duration if _video_rec else 0,
-                            file_size=local_task.total_size or 0,
-                        )
+                                title=_title,
+                                cover_url=_cover_url,
+                                duration=_duration,
+                                file_size=_file_size,
+                            )
+                            logger.info(f"[Task] 完成日志写入结果: video_id={local_task.video_id}, success={result}")
+                        else:
+                            logger.debug(f"[Task] 60s内已有完成日志，跳过: video_id={local_task.video_id}")
                     except Exception as _le:
-                        logger.debug(f"记录完成日志失败(非致命): {_le}")
+                        logger.warning(f"[Task] 记录完成日志失败: video_id={local_task.video_id}, error={_le}")
                 else:
-                    # 文件不存在：标记为 failed，不设置 completed_at
+                    # 文件不存在：标记为 failed，但仍记录完成日志
+                    # Go报done说明下载实际完成，文件可能被移动/编码问题导致找不到
                     logger.error(f"[get_task_progress] Go报done但文件不存在: task_id={task_id}, path={full_path}")
                     db.update_download_task_status(task_id, "failed", completed_at=None)
                     status = "failed"
                     error_msg = "文件不存在：Go后端报done但磁盘无对应文件"
+
+                    # 通知前端任务失败
+                    try:
+                        from core.utils.event_bus import emit_task_failed
+                        emit_task_failed({
+                            "task_id": task_id,
+                            "video_id": local_task.video_id,
+                            "error_msg": error_msg,
+                        })
+                        logger.info(f"[Task] 已发送 task_failed 事件: video_id={local_task.video_id}")
+                    except Exception as emit_e:
+                        logger.warning(f"[Task] 发送 task_failed 事件失败: {emit_e}")
+
+                    # 即使文件找不到也记录完成日志（下载实际已成功）
+                    try:
+                        from core.utils.database import get_database
+                        _db3 = get_database()
+                        if not _db3.has_recent_log(local_task.video_id, 60):
+                            _v3 = _db3.get_author_video(local_task.video_id)
+                            _a3_id = _v3.author_id if _v3 else ''
+                            _u3 = ''
+                            if _a3_id:
+                                _a3 = _db3.get_author(_a3_id)
+                                _u3 = _a3.source_author_id if _a3 else ''
+                            _t3 = local_task.title or (_v3.title if _v3 else '')
+                            logger.info(f"[Task] 文件不存在仍写入完成日志: video_id={local_task.video_id}")
+                            _db3.log_task_completion(
+                                video_id=local_task.video_id,
+                                author_id=_a3_id,
+                                username=_u3,
+                                title=_t3,
+                                cover_url=_v3.cover_url if _v3 else '',
+                                duration=_v3.duration if _v3 else 0,
+                                file_size=local_task.total_size or 0,
+                            )
+                    except Exception as _fle:
+                        logger.warning(f"[Task] 文件不存在场景记录完成日志失败: video_id={local_task.video_id}, error={_fle}")
             else:
                 # 非 done 状态：正常更新进度
                 # Go 后端的 wait 表示排队中（等待并发槽位），保留原状态与 paused 区分
@@ -513,7 +562,13 @@ def save_progress_from_sse(progress_data: dict):
     else:
         progress = 0
 
-    # 更新数据库
+    # 终态（done/completed/error）不在此处写 DB：
+    # socket_client.py 已处理终态逻辑（标记已下载 + 触发事件 + 写完成日志），
+    # 此处写入可能与 HTTP 轮询的终态处理冲突（旧数据覆盖新状态）
+    if status in ("done", "completed", "error"):
+        return
+
+    # 更新数据库（仅 running 状态的进度）
     db.update_download_task_progress(task_id, progress, downloaded, total_size, speed, status)
 
 

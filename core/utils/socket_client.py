@@ -117,50 +117,77 @@ class DownloadProgressListener:
 
         # 终态时立即写 DB + 触发事件总线，确保 SSE 转发时 DB 已有 download_path
         status = task.get("status", "")
-        if status in ("done", "completed") and video_id:
-            try:
-                from core.utils.database import db
-                video_record = db.get_author_video(video_id)
-                if video_record and not video_record.is_downloaded:
-                    opts = (meta.get("opts") or {}) if isinstance(meta, dict) else {}
-                    dir_path = opts.get("path", "")
-                    file_name = opts.get("name", "")
-                    if dir_path and file_name:
-                        from pathlib import Path
-                        full_path = str(Path(dir_path) / file_name)
-                        import os
-                        if os.path.isfile(full_path):
-                            db.update_video_downloaded(video_id, full_path)
-                            logger.debug(f"[WS] 标记视频已下载: {video_id}, path={full_path}")
-                            author = db.get_author(video_record.author_id) if video_record.author_id else None
-                            if author:
-                                from core.utils.event_bus import emit_task_completed
-                                emit_task_completed({"video_id": video_id, "author_id": video_record.author_id})
-            except Exception as e:
-                logger.debug(f"[WS] 终态处理异常(非致命): {e}")
+        task_id = task.get("id", "")
+        if status in ("done", "completed") and (video_id or task_id):
+            log_key = video_id or task_id
+            logger.info(f"[WS] 任务终态: video_id={video_id}, task_id={task_id}, status={status}")
+
+            # --- 标记视频已下载 + 触发 task_completed 事件（仅 video_id 存在时） ---
+            if video_id:
+                try:
+                    from core.utils.database import db
+                    video_record = db.get_author_video(video_id)
+                    if video_record and not video_record.is_downloaded:
+                        opts = (meta.get("opts") or {}) if isinstance(meta, dict) else {}
+                        dir_path = opts.get("path", "")
+                        file_name = opts.get("name", "")
+                        if dir_path and file_name:
+                            from pathlib import Path
+                            full_path = str(Path(dir_path) / file_name)
+                            import os
+                            if os.path.isfile(full_path):
+                                db.update_video_downloaded(video_id, full_path)
+                                logger.info(f"[WS] 标记视频已下载: video_id={video_id}, path={full_path}")
+                                author = db.get_author(video_record.author_id) if video_record.author_id else None
+                                if author:
+                                    from core.utils.event_bus import emit_task_completed
+                                    emit_task_completed({"video_id": video_id, "author_id": video_record.author_id})
+                                    logger.info(f"[WS] 触发task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
+                                else:
+                                    logger.warning(f"[WS] 视频作者未找到，跳过task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
+                            else:
+                                logger.warning(f"[WS] 文件不存在，跳过标记已下载: video_id={video_id}, expected_path={full_path}")
+                        else:
+                            logger.warning(f"[WS] 缺少path/name，跳过标记已下载: video_id={video_id}, dir_path={dir_path}, file_name={file_name}")
+                    elif video_record and video_record.is_downloaded:
+                        logger.debug(f"[WS] 视频已标记已下载，跳过: video_id={video_id}")
+                    else:
+                        logger.warning(f"[WS] video_record未找到: video_id={video_id}")
+                except Exception as e:
+                    logger.warning(f"[WS] 终态处理异常: video_id={video_id}, error={e}")
 
             # 记录任务完成（非阻塞，防止双触发点重复写入）
             try:
                 from core.utils.database import get_database
                 _db = get_database()
-                if not _db.has_recent_log(video_id, 60):
-                    _video_rec = _db.get_author_video(video_id)
-                _author_id = _video_rec.author_id if _video_rec else ''
-                _username = ''
-                if _author_id:
-                    _author = _db.get_author(_author_id)
-                    _username = _author.source_author_id if _author else ''
-                _db.log_task_completion(
-                    video_id=video_id,
-                    author_id=_author_id,
-                    username=_username,
-                    title=task.get('name', ''),
-                    cover_url=_video_rec.cover_url if _video_rec else '',
-                    duration=_video_rec.duration if _video_rec else 0,
-                    file_size=total_size,
-                )
+                has_recent = _db.has_recent_log(log_key, 60)
+                logger.info(f"[WS] 完成日志检查: key={log_key}, has_recent_log(60s)={has_recent}")
+                if not has_recent:
+                    _video_rec = _db.get_author_video(video_id) if video_id else None
+                    _author_id = _video_rec.author_id if _video_rec else ''
+                    _username = ''
+                    if _author_id:
+                        _author = _db.get_author(_author_id)
+                        _username = _author.source_author_id if _author else ''
+                    _title = task.get('name', '') or (_video_rec.title if _video_rec else '')
+                    _cover_url = _video_rec.cover_url if _video_rec else ''
+                    _duration = _video_rec.duration if _video_rec else 0
+                    logger.info(f"[WS] 写入完成日志: key={log_key}, author_id={_author_id}, "
+                                f"username={_username}, title={_title[:40] if _title else 'N/A'}, file_size={total_size}")
+                    result = _db.log_task_completion(
+                        video_id=log_key,
+                        author_id=_author_id,
+                        username=_username,
+                        title=_title,
+                        cover_url=_cover_url,
+                        duration=_duration,
+                        file_size=total_size,
+                    )
+                    logger.info(f"[WS] 完成日志写入结果: key={log_key}, success={result}")
+                else:
+                    logger.debug(f"[WS] 60s内已有完成日志，跳过: key={log_key}")
             except Exception as _le:
-                logger.debug(f"[WS] 记录完成日志失败(非致命): {_le}")
+                logger.warning(f"[WS] 记录完成日志失败: key={log_key}, error={_le}")
 
         self._callback(normalized)
 

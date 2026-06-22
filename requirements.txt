@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+pywebview
+python-dotenv
+pyyaml
+httpx
+requests
+openai
+pillow
+opencv-python
+scikit-learn
+python-multipart
+websocket-client
+typer[all]

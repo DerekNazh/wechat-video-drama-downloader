@@ -62,17 +62,12 @@ var ReactiveRenderer = {
   refreshCurrentView: function() {
     if (!this._currentAuthor) return;
 
-    var username = this._currentAuthor.username;
+    var username = this._currentAuthor?.username || '';
     var videos = State.videos.getAuthorVideos(username);
 
-    // 过滤当前类型
-    var filtered = videos.filter(function(v) {
-      return (v.video_type || 'short_video') === this._currentVideoType;
-    }.bind(this));
-
-    // 调用现有渲染函数
+    // renderVideoList 内部已做 videoType 过滤，无需重复
     if (typeof renderVideoList === 'function') {
-      renderVideoList(filtered, this._currentTab);
+      renderVideoList(videos, this._currentTab);
     }
 
     // 更新统计
@@ -111,8 +106,8 @@ var ReactiveRenderer = {
   },
 
   _onTaskAdd: function(e) {
-    var tasks = e.tasks;
-    if (!tasks || tasks.length === 0) return;
+    var task = e.task;
+    if (!task) return;
 
     // 如果当前在"正在下载"tab，需要重新渲染视频列表
     if (this._currentTab === 'downloading') {
@@ -121,29 +116,10 @@ var ReactiveRenderer = {
   },
 
   _onTaskProgressChange: function(e) {
-    var changes = e.changes;
-    if (!changes || changes.length === 0) return;
-
-    // "全部"和"已下载"tab 的进度更新由 updateSingleVideoProgress（链路A）负责
-    // ReactiveRenderer 不再参与，避免两条链路互相覆盖导致速度/大小信息丢失
-    if (this._currentTab === 'all' || this._currentTab === 'downloaded') {
-      return;
-    }
-
-    changes.forEach(function(change) {
-      var taskId = change.id;
-      var task = State.tasks.get(taskId);
-      if (!task) return;
-
-      var videoId = task.video_id;
-      if (!videoId) return;
-
-      // 更新进度条（如果视频在当前视图）
-      var video = State.videos.get(State.videos.getAuthorByVideoId(videoId), videoId);
-      if (video && this._shouldRender(video)) {
-        this._updateProgressUI(videoId, task);
-      }
-    }.bind(this));
+    // 进度更新完全由 SSE 直接 DOM 链路（updateSingleVideoProgress）负责
+    // ReactiveRenderer 不再参与任何 tab 的进度 badge 更新
+    // 避免双链路同时操作同一 DOM 元素导致 class 丢失（如 resuming 被覆盖为 downloading）
+    // 本链路只负责统计数字更新（_updateAllStats 在 _onVideoStatusChange 中已覆盖）
   },
 
   _onTaskComplete: function(e) {
@@ -163,13 +139,13 @@ var ReactiveRenderer = {
 
   _onTaskCancel: function(e) {
     var taskId = e.taskId;
-    var task = State.tasks.get(taskId);
+    var task = State.tasks.getByTaskId(taskId);
 
     var videoId = task ? task.video_id : null;
 
-    // 从 _activeTasks 移除
-    if (typeof _activeTasks !== 'undefined') {
-      _activeTasks = _activeTasks.filter(function(t) { return t.id !== taskId; });
+    if (task) {
+      State.tasks.removeByVideoId(task.video_id);
+      _activeTasks = State.tasks.all();
     }
 
     // 更新视频行 UI
@@ -225,8 +201,8 @@ var ReactiveRenderer = {
   },
 
   _isTaskActive: function(videoId) {
-    var task = State.tasks.getByVideoId(videoId);
-    return task && task.status !== 'done' && task.status !== 'error' && task.status !== 'completed';
+    var task = State.tasks.get(videoId);
+    return task && task.status !== 'done' && task.status !== 'error' && task.status !== 'completed' && task.status !== 'failed';
   },
 
   // ==================== DOM 更新 ====================

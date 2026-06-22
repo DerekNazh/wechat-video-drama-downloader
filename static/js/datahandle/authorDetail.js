@@ -1,5 +1,6 @@
 // 作者详情页数据处理
 var _sseReconnectInterval = null;
+var _completionRefreshDebounce = {};
 
 // SSE 监听：实时更新作者下载统计
 function initSSEListener() {
@@ -89,7 +90,7 @@ function initSSEListener() {
     // 懒加载历史记录
     if (State.logs && State.logs.getTotal() === 0) {
       if (typeof fetchCompletionLog === 'function') {
-        fetchCompletionLog();
+        fetchCompletionLog(50);
       }
     }
   };
@@ -113,6 +114,25 @@ function initSSEListener() {
       handleSSETaskCompleted(data);
     } catch(err) {
       console.error('[SSE] 解析失败:', err);
+    }
+  });
+
+  es.addEventListener('task_failed', function(e) {
+    try {
+      var data = JSON.parse(e.data);
+      // Go 报 done 但文件不存在，将视频行恢复为"待下载"
+      var videoId = data.video_id;
+      if (videoId && typeof updateSingleVideoError === 'function') {
+        updateSingleVideoError(videoId);
+      }
+      // 从活跃任务中移除
+      if (videoId) {
+        State.tasks.removeByVideoId(videoId);
+        _activeTasks = State.tasks.all();
+      }
+      showToast({ type: 'error', title: '下载异常', message: data.error_msg || '文件不存在，下载可能未完成' });
+    } catch(err) {
+      console.error('[SSE] task_failed 解析失败:', err);
     }
   });
 
@@ -376,7 +396,7 @@ function handleSSETaskCompleted(data) {
   // 刷新历史记录
   if (State.logs && State.logs.getTotal() > 0) {
     if (typeof fetchCompletionLog === 'function') {
-      fetchCompletionLog(8);
+      fetchCompletionLog(50);
     }
   }
 
@@ -524,16 +544,31 @@ function handleSSETaskProgress(data) {
     // 3. 刷新任务列表
     refreshActiveTasks();
 
-    // 4. 异步全量刷新数据（获取 download_path 等完整信息），刷新后补全播放按钮
+    // 4. 异步全量刷新数据
+    // 注意：task_completed 事件也会触发 loadAllDataFromBackend，
+    // 用防抖避免同一视频的 task_progress(done) + task_completed 双重刷新
     var _completedVideoId = (data.status === 'done') ? videoId : null;
-    loadAllDataFromBackend().then(function() {
-      if (_completedVideoId && _currentAuthor && _currentPage === 'author') {
-        var refreshedVideo = _authorVideosData[_currentAuthor.username]?.videos[_completedVideoId];
-        if (refreshedVideo && refreshedVideo.download_path && typeof updateSingleVideoCompleted === 'function') {
-          updateSingleVideoCompleted(_completedVideoId, refreshedVideo);
-        }
+    var _completedAuthorUsername = _currentAuthor?.username || null; // 捕获当前作者，防止切换后写错
+    if (typeof _completionRefreshDebounce === 'undefined') var _completionRefreshDebounce = {};
+    if (_completedVideoId) {
+      if (_completionRefreshDebounce[_completedVideoId]) {
+        clearTimeout(_completionRefreshDebounce[_completedVideoId]);
       }
-    });
+      _completionRefreshDebounce[_completedVideoId] = setTimeout(function() {
+        delete _completionRefreshDebounce[_completedVideoId];
+        loadAllDataFromBackend().then(function() {
+          // 仅当用户仍在同一作者页面时才更新
+          if (_completedVideoId && _completedAuthorUsername && _currentAuthor?.username === _completedAuthorUsername && _currentPage === 'author') {
+            var refreshedVideo = _authorVideosData[_completedAuthorUsername]?.videos[_completedVideoId];
+            if (refreshedVideo && refreshedVideo.download_path && typeof updateSingleVideoCompleted === 'function') {
+              updateSingleVideoCompleted(_completedVideoId, refreshedVideo);
+            }
+          }
+        });
+      }, 500);
+    } else {
+      loadAllDataFromBackend();
+    }
     return;
   }
 
@@ -616,31 +651,124 @@ function handleSSETaskProgress(data) {
   }, 200);
 }
 
-function handleSSEVideoFetchProgress(data) {
-  var progressCountEl = document.getElementById('syncProgressCount');
-  var progressTextEl = document.getElementById('syncProgressText');
-  if (!progressCountEl) return;
+function _syncSetStep(stepNum) {
+  var steps = document.querySelectorAll('.sync-step');
+  steps.forEach(function(step, idx) {
+    var stepN = idx + 1;
+    step.classList.remove('active', 'done');
+    if (stepN < stepNum) {
+      step.classList.add('done');
+    } else if (stepN === stepNum) {
+      step.classList.add('active');
+    }
+  });
+}
 
-  var phase = data.phase || 'fetching';
+function _syncUpdateCumulativeCounts(data, svNumEl, rpNumEl) {
+  if (data.short_video_count != null) {
+    SyncDialogState.totalSV = Math.max(SyncDialogState.totalSV, data.short_video_count);
+  }
+  if (data.replay_count != null) {
+    SyncDialogState.totalRP = Math.max(SyncDialogState.totalRP, data.replay_count);
+  }
+  if (svNumEl) svNumEl.textContent = SyncDialogState.totalSV;
+  if (rpNumEl) rpNumEl.textContent = SyncDialogState.totalRP;
+}
+
+function _handleSyncStart(progressEl, progressTextEl, progressCountEl, svNumEl, rpNumEl) {
+  SyncDialogState.totalSV = 0;
+  SyncDialogState.totalRP = 0;
+  if (svNumEl) svNumEl.textContent = '0';
+  if (rpNumEl) rpNumEl.textContent = '0';
+  if (progressEl) progressEl.classList.remove('done');
+  if (progressTextEl) progressTextEl.textContent = '正在准备...';
+  if (progressCountEl) progressCountEl.textContent = '';
+  _syncSetStep(1);
+}
+
+function _handleSyncFetching(data, progressTextEl, progressCountEl) {
+  var videoType = data.video_type || '';
+  var stepNum = videoType === 'live_replay' ? 3 : 2;
+  _syncSetStep(stepNum);
+
+  var phaseLabel = videoType === 'short_video' ? '短视频' : (videoType === 'live_replay' ? '直播回放' : '');
+  if (progressTextEl) {
+    progressTextEl.textContent = phaseLabel ? '正在获取' + phaseLabel + '...' : (data.name || '正在获取...');
+  }
+  if (progressCountEl) {
+    if (data.total) {
+      progressCountEl.textContent = '已扫描 ' + data.current + ' / ' + data.total;
+    } else {
+      progressCountEl.textContent = '已扫描 ' + data.current + ' 个';
+    }
+  }
+}
+
+function _handleSyncSaving(data, progressTextEl, progressCountEl) {
+  _syncSetStep(4);
+  if (progressTextEl) progressTextEl.textContent = '正在保存视频...';
+  if (progressCountEl) {
+    if (data.total) {
+      progressCountEl.textContent = '保存 ' + data.current + ' / ' + data.total;
+    } else {
+      progressCountEl.textContent = '保存 ' + data.current + ' 个';
+    }
+  }
+}
+
+function _handleSyncDone(data, progressEl, progressTextEl, progressCountEl) {
+  _syncSetStep(4);
+  var steps = document.querySelectorAll('.sync-step');
+  steps.forEach(function(step) {
+    step.classList.remove('active');
+    step.classList.add('done');
+  });
+
+  if (progressEl) progressEl.classList.add('done');
+  if (progressTextEl) progressTextEl.textContent = '同步完成';
+  if (progressCountEl) progressCountEl.textContent = '新增 ' + data.current + ' 个视频';
+
+  // SSE done 先于 HTTP 响应到达，延迟关闭让用户看到完成状态
+  if (!SyncDialogState.done) {
+    SyncDialogState.done = true;
+    SyncDialogState.addedCount = data.current || 0;
+    setTimeout(function() {
+      if (!document.getElementById('syncOptionsDialog')) return;
+      var overlay = document.getElementById('syncOptionsDialog');
+      closeDialog(overlay);
+      if (typeof _finishSyncSuccess === 'function') {
+        var btnId = overlay.dataset?.btnId || '';
+        var nickname = data.author_name || '';
+        _finishSyncSuccess(btnId, nickname);
+      }
+    }, 1500);
+  }
+}
+
+function handleSSEVideoFetchProgress(data) {
+  var overlay = document.getElementById('syncOptionsDialog');
+  if (!overlay) return;
+
+  if (SyncDialogState.authorName && data.author_name && data.author_name !== SyncDialogState.authorName) return;
+
+  var progressEl = document.getElementById('syncProgress');
+  var progressTextEl = document.getElementById('syncProgressText');
+  var progressCountEl = document.getElementById('syncProgressCount');
+  var svNumEl = document.getElementById('syncStatSVNum');
+  var rpNumEl = document.getElementById('syncStatRPNum');
+
+  var phase = data.phase || '';
+
+  _syncUpdateCumulativeCounts(data, svNumEl, rpNumEl);
 
   if (phase === 'start') {
-    if (progressTextEl) progressTextEl.textContent = '正在拉取视频列表...';
-    progressCountEl.textContent = '准备中...';
+    _handleSyncStart(progressEl, progressTextEl, progressCountEl, svNumEl, rpNumEl);
   } else if (phase === 'fetching') {
-    // 拉取阶段：total 可能为 null（逐页拉取，总数未知）
-    if (data.total) {
-      progressCountEl.textContent = '已获取 ' + data.current + ' / ' + data.total + ' 个视频';
-    } else {
-      progressCountEl.textContent = '已扫描 ' + data.current + ' 个视频';
-    }
-    if (progressTextEl && data.name) progressTextEl.textContent = data.name;
+    _handleSyncFetching(data, progressTextEl, progressCountEl);
   } else if (phase === 'saving') {
-    // 入库阶段：用 i+1/total 显示入库进度
-    progressCountEl.textContent = '入库 ' + data.current + ' / ' + data.total + ' 个（新增 ' + (data.added || 0) + '）';
-    if (progressTextEl) progressTextEl.textContent = '正在入库: ' + (data.name || '');
+    _handleSyncSaving(data, progressTextEl, progressCountEl);
   } else if (phase === 'done') {
-    progressCountEl.textContent = '已完成，新增 ' + data.current + ' 个视频';
-    if (progressTextEl) progressTextEl.textContent = '同步完成';
+    _handleSyncDone(data, progressEl, progressTextEl, progressCountEl);
   }
 }
 
@@ -812,7 +940,7 @@ async function loadAuthorDetail(username) {
     document.getElementById("videoList").innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-tertiary)">加载中...</div>';
   }
 
-  // 如果 Go 在线，增量同步作者视频
+  // 增量同步作者最新视频（后端基于 latest_publish_date 基准，不会拉回已删除的旧视频）
   if (_goOnline && author?.id) {
     try {
       const res = await fetch(`/api/video/author/${author.id}/add`, {
@@ -825,7 +953,6 @@ async function loadAuthorDetail(username) {
         const data = await res.json();
 
         if (data.code === 0 && (data.data?.added || 0) > 0) {
-          const added = data.data.added;
           await loadAllDataFromBackend();
           // 重新加载当前类型的视频
           const typeRes = await fetch(`/api/video/author/${author.id}?video_type=${_currentVideoType}`);
@@ -837,7 +964,6 @@ async function loadAuthorDetail(username) {
               _authorVideosData[username].videos[v.video_id] = mapped;
             });
             const newVideos = Object.values(_authorVideosData[username].videos);
-            const newDownloaded = newVideos.filter(v => v.downloaded).length;
             renderVideoList(newVideos);
             updateAuthorStatsByType(typeData.stats);
             // 更新全局进度条

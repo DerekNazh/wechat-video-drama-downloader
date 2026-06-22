@@ -18,6 +18,10 @@ let _goOnline = false;
 let _serviceState = 'stopped';
 let _monitorRunning = false;
 let _sseConnected = false;
+let _fallbackPollInterval = null;
+let _taskResumeRetryTimer = null;
+let _taskResumeRetryCount = 0;
+const MAX_TASK_RESUME_RETRIES = 6;
 
 // ==================== rAF 批量更新 ====================
 let _rafQueued = false;
@@ -113,29 +117,27 @@ initConfig();
 
 async function initApp() {
   startLoadingProgress();
-  document.getElementById('statusDrawer')?.classList.add('open');
+  // FAB panel starts closed — user clicks FAB to open
 
-  // 1. 拉全量数据（作者+视频）
+  // 1. 拉全量数据（作者+视频，不需要 Go 服务）
   await loadAllDataFromBackend();
 
   // 2. 拉一次日志
   refreshLogs();
   startUptimeTimer();
 
-  // 3. 拉一次初始服务状态（之后由 SSE 推送）
-  pollServiceStatus();
-
-  // SSE 实时推送：服务状态 + 任务进度 + 任务完成
+  // 3. 不主动拉服务状态和任务列表 — 等 SSE 连接成功后由 onopen 触发
+  //    避免启动时 Go 未就绪产生 503 红色报错
   initSSEListener();
 
   // 日志轮询（10秒，避免频繁刷日志）
   setInterval(refreshLogs, 10000);
 
-  // 5. 新视频同步轮询（30秒）- 增量同步，只插入新视频
+  // 4. 新视频同步轮询（30分钟）- 增量同步，只插入新视频
   syncTimer = setInterval(pollNewVideos, syncInterval);
-  pollNewVideos();
+  // 不在启动时立即调用 pollNewVideos，等 SSE 连接确认 Go 在线后由 onopen 触发
 
-  // 6. 广告开关 + 开屏弹窗
+  // 5. 广告开关 + 开屏弹窗
   applyAdsConfig();
 }
 
@@ -144,6 +146,7 @@ async function initApp() {
 async function loadAllDataFromBackend() {
   try {
     const res = await fetch("/api/video/all");
+    if (!res.ok) return;
     const json = await res.json();
     if (json.code !== 0 || !json.data) return;
 
@@ -189,8 +192,8 @@ async function loadAllDataFromBackend() {
       };
     });
 
-    // 4. 拉活跃任务
-    await refreshActiveTasks();
+    // 4. 不在 loadAllDataFromBackend 中拉活跃任务 — 等 SSE 连接成功后由 onopen 触发
+    //    避免启动时 Go 未就绪产生 503 红色报错
 
     // 5. 写入 State 层
     bridgePollUpdate({
@@ -203,7 +206,7 @@ async function loadAllDataFromBackend() {
     // 6. UI 更新
     scheduleUIUpdate(updateAuthorGridFromPoll);
   } catch (err) {
-    console.error('loadAllDataFromBackend:', err);
+    // 静默处理，数据等 SSE 恢复后填充
   }
 }
 
@@ -225,7 +228,7 @@ async function pollServiceStatus() {
       total_videos: data.total_videos || 0,
     });
   } catch (err) {
-    // 服务不可达
+    // 服务不可达，静默标记离线
     updateStatusFromPoll({
       service_online: false,
       wechat_connected: false,
@@ -242,7 +245,10 @@ async function pollServiceStatus() {
 async function refreshActiveTasks() {
   try {
     const res = await fetch("/api/task/list");
-    if (!res.ok) return;
+    if (!res.ok) {
+      // 503 = Go 未就绪，静默返回空，等 SSE onopen 后自动重试
+      return;
+    }
     const json = await res.json();
     if (json.code !== 0) return;
 
@@ -270,6 +276,24 @@ async function refreshActiveTasks() {
     State.tasks.setAll(filtered);
     // 同步只读视图
     _activeTasks = State.tasks.all();
+
+    // 如果所有活跃任务都是 pending 且 Go 在线，说明 resume 还没完成，5s 后重试
+    if (_goOnline && _activeTasks.length > 0 && _activeTasks.every(function(t) { return t.status === 'pending' || t.status === 'wait' || t.status === 'paused'; }) && _taskResumeRetryCount < MAX_TASK_RESUME_RETRIES) {
+      if (!_taskResumeRetryTimer) {
+        _taskResumeRetryTimer = setTimeout(function() {
+          _taskResumeRetryTimer = null;
+          _taskResumeRetryCount++;
+          refreshActiveTasks();
+        }, 5000);
+      }
+    } else if (_taskResumeRetryTimer) {
+      clearTimeout(_taskResumeRetryTimer);
+      _taskResumeRetryTimer = null;
+    }
+    // 任务已恢复或不存在，重置重试计数
+    if (!_activeTasks.every(function(t) { return t.status === 'pending' || t.status === 'wait' || t.status === 'paused'; })) {
+      _taskResumeRetryCount = 0;
+    }
   } catch (err) {
     // Go 后端未启动时静默忽略，不弹 toast
   }
@@ -290,7 +314,8 @@ async function refreshAfterVideoChange() {
 async function pollNewVideos() {
   if (!_goOnline) return;
   try {
-    const res = await apiFetch('/api/video/sync-new', { method: 'POST' });
+    const res = await fetch('/api/video/sync-new', { method: 'POST' });
+    if (!res.ok) return;
     const json = await res.json();
     if (json.code !== 0 || !json.data) return;
 
@@ -313,12 +338,20 @@ async function pollNewVideos() {
       if (!authorData) return;
 
       if (!authorData.videos[nv.video_id]) {
-        authorData.videos[nv.video_id] = mapVideo(nv);
+        // 通过 State 层插入，再同步到 _authorVideosData
+        if (State.videos._data[username]) {
+          State.videos._data[username].videos[nv.video_id] = mapVideo(nv);
+        } else {
+          State.videos._data[username] = { nickname: '', videos: { [nv.video_id]: mapVideo(nv) } };
+        }
         hasUpdate = true;
       }
     });
 
     if (!hasUpdate) return;
+
+    // 从 State 同步到 _authorVideosData
+    _authorVideosData = State.videos.allGrouped();
 
     // 更新目录统计
     _catalogData.forEach((cat, idx) => {
@@ -346,8 +379,8 @@ async function pollNewVideos() {
     });
 
     // 如果当前在作者详情页，增量插入新视频行
-    if (_currentAuthor && _currentPage === 'authorDetail') {
-      const videos = Object.values(_authorVideosData[_currentAuthor.username]?.videos || {});
+    if (_currentAuthor && _currentPage === 'author') {
+      const videos = Object.values(_authorVideosData[_currentAuthor?.username || '']?.videos || {});
       updateVideoListIncremental(videos);
     }
 
@@ -355,7 +388,7 @@ async function pollNewVideos() {
     scheduleUIUpdate(updateAuthorGridFromPoll);
 
   } catch(err) {
-    console.error('pollNewVideos:', err);
+    // 503 = Go/微信未就绪，静默跳过，等 SSE 推送恢复
   }
 }
 

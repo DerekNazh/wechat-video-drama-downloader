@@ -2,14 +2,14 @@
 // 后端: /api/task/*
 
 // GET /api/task/list - 获取任务列表
-export async function getTaskList() {
-  const res = await apiFetch("/api/task/list");
+async function getTaskList() {
+  const res = await fetch("/api/task/list");
   return res.json();
 }
 
 // POST /api/task/cancel - 取消任务（需要 task_id）
-export async function cancelTask(taskId) {
-  const res = await apiFetch("/api/task/cancel", {
+async function cancelTask(taskId) {
+  const res = await fetch("/api/task/cancel", {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ task_id: taskId })
@@ -18,14 +18,14 @@ export async function cancelTask(taskId) {
 }
 
 // POST /api/task/cancel-all - 取消所有任务
-export async function cancelAllTasks() {
-  const res = await apiFetch("/api/task/cancel-all", { method: 'POST' });
+async function cancelAllTasks() {
+  const res = await fetch("/api/task/cancel-all", { method: 'POST' });
   return res.json();
 }
 
 // DELETE /api/task/{task_id} - 删除任务
-export async function deleteTask(taskId) {
-  const res = await apiFetch(`/api/task/${taskId}`, { method: 'DELETE' });
+async function deleteTask(taskId) {
+  const res = await fetch("/api/task/" + taskId, { method: 'DELETE' });
   return res.json();
 }
 

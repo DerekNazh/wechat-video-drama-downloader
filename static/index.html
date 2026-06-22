@@ -18,6 +18,13 @@
   <div class="loading-text" id="loadingText">正在初始化...</div>
 </div>
 
+<!-- 悬浮顶部触发区 + 模块切换Tab -->
+<div class="module-hover-trigger" id="moduleHoverTrigger"></div>
+<div class="module-tabs-bar" id="moduleTabsBar">
+  <button class="module-tab active" id="tabMonitor" onclick="switchModule('monitor')">视频号监控</button>
+  <button class="module-tab" id="tabSniff" onclick="switchModule('sniff')">短剧下载</button>
+</div>
+
 <div class="app">
   <!-- Header -->
   <header class="header">
@@ -46,59 +53,137 @@
     </div>
   </header>
 
-  <!-- 状态栏（可折叠抽屉） -->
-  <div class="status-drawer" id="statusDrawer">
-    <button class="status-drawer-toggle" onclick="toggleStatusDrawer()" id="drawerToggle">
-      <div class="drawer-summary">
-        <span class="drawer-dot" id="summaryDot"></span>
-        <span class="drawer-text" id="summaryText">检测中...</span>
-      </div>
-      <svg class="drawer-chevron" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-        <path d="M3.5 5.25L7 8.75L10.5 5.25"/>
-      </svg>
-    </button>
-    <div class="status-drawer-body" id="drawerBody">
+  <!-- 悬浮球 + 右侧状态面板 -->
+  <div class="fab-panel" id="fabPanel">
+    <!-- 可调整宽度拖拽手柄 -->
+    <div class="drawer-resize-handle" id="drawerResizeHandle"></div>
+    <div class="fab-panel-header">
       <div class="drawer-tabs">
         <button class="drawer-tab active" id="drawerTabStatus" onclick="switchDrawerTab('status')">状态</button>
         <button class="drawer-tab" id="drawerTabHistory" onclick="switchDrawerTab('history')">历史</button>
       </div>
-      <div id="drawerStatusContent">
-      <div class="status-detail">
-        <span class="stat-chip"><span class="stat-label">今日新增</span><span class="stat-num" id="txtTodayCount">0</span></span>
-        <span class="status-sep"></span>
-        <span class="stat-chip"><span class="stat-label">今日已下载</span><span class="stat-num" id="txtTodayDownloaded">0</span></span>
-        <span class="status-sep"></span>
-        <span class="stat-chip"><span class="stat-label">总视频</span><span class="stat-num" id="txtTotalVideos">0</span></span>
-        <span class="spacer"></span>
-        <span class="status-item" id="cellService" data-tooltip="视频号后端服务：负责视频抓取与下载的 Go 进程">
-          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="12" y2="10"/><circle cx="12" cy="16" r="2"/></svg>
-          <span class="dot" id="dotService"></span>
-          <span class="status-text" id="txtService">检测中</span>
-          <button class="btn-service" id="btnService" onclick="toggleService(event)">&#9654; 启动</button>
-        </span>
-        <span class="status-sep"></span>
-        <span class="status-item" id="cellWechat" data-tooltip="微信视频号客户端连接：PC 端微信是否已登录且可被调用">
-          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0111 12c1.4 0 2.5 1.1 3 2.5"/><path d="M5 10a7 7 0 0114 0"/><path d="M2 7a10 10 0 0120 0"/><circle cx="12" cy="17" r="1" fill="currentColor"/></svg>
-          <span class="dot" id="dotWechat"></span>
-          <span class="status-text" id="txtWechat">检测中</span>
-        </span>
-        <span class="status-sep"></span>
-        <span class="status-item" id="cellMonitor" data-tooltip="视频监控：自动轮询已添加作者的新视频并创建下载任务">
-          <svg class="status-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
-          <span class="dot" id="dotMonitor"></span>
-          <span class="status-text" id="txtMonitor">已停止</span>
-        </span>
+      <button class="fab-panel-close" onclick="toggleFabPanel()" title="关闭面板" aria-label="关闭状态面板">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="drawerStatusContent">
+      <!-- 状态总览 -->
+      <div class="status-overview">
+        <div class="status-overview-card">
+          <div class="overview-icon today-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <div class="overview-body">
+            <span class="stat-num" id="txtTodayCount">0</span>
+            <span class="stat-label">今日新增</span>
+          </div>
+        </div>
+        <div class="status-overview-card">
+          <div class="overview-icon download-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </div>
+          <div class="overview-body">
+            <span class="stat-num" id="txtTodayDownloaded">0</span>
+            <span class="stat-label">今日已下载</span>
+          </div>
+        </div>
+        <div class="status-overview-card">
+          <div class="overview-icon total-icon">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <div class="overview-body">
+            <span class="stat-num" id="txtTotalVideos">0</span>
+            <span class="stat-label">总视频</span>
+          </div>
+        </div>
       </div>
-      </div>
-      <div id="drawerHistoryContent" style="display:none">
-        <div class="history-panel">
-          <div id="historyList">
-            <div class="history-empty">暂无下载记录</div>
+      <!-- 服务状态 -->
+      <div class="status-section-title">服务状态</div>
+      <div class="status-services">
+        <div class="status-service-card" id="cellService" data-tooltip="视频号后端服务：负责视频抓取与下载的 Go 进程">
+          <div class="service-card-left">
+            <div class="service-card-icon service-icon-go">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="12" y2="10"/><circle cx="12" cy="16" r="2"/></svg>
+            </div>
+            <div class="service-card-info">
+              <span class="service-card-name">Go 服务</span>
+              <span class="service-card-status" id="txtService">检测中</span>
+            </div>
+          </div>
+          <div class="service-card-right">
+            <span class="dot" id="dotService"></span>
+            <button class="btn-service" id="btnService" onclick="toggleService(event)">&#9654; 启动</button>
+          </div>
+        </div>
+        <div class="status-service-card" id="cellWechat" data-tooltip="微信视频号客户端连接：PC 端微信是否已登录且可被调用">
+          <div class="service-card-left">
+            <div class="service-card-icon service-icon-wechat">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0111 12c1.4 0 2.5 1.1 3 2.5"/><path d="M5 10a7 7 0 0114 0"/><path d="M2 7a10 10 0 0120 0"/><circle cx="12" cy="17" r="1" fill="currentColor"/></svg>
+            </div>
+            <div class="service-card-info">
+              <span class="service-card-name">微信连接</span>
+              <span class="service-card-status" id="txtWechat">检测中</span>
+            </div>
+          </div>
+          <div class="service-card-right">
+            <span class="dot" id="dotWechat"></span>
+          </div>
+        </div>
+        <div class="status-service-card" id="cellMonitor" data-tooltip="视频监控：自动轮询已添加作者的新视频并创建下载任务">
+          <div class="service-card-left">
+            <div class="service-card-icon service-icon-monitor">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+            <div class="service-card-info">
+              <span class="service-card-name">视频监控</span>
+              <span class="service-card-status" id="txtMonitor">已停止</span>
+            </div>
+          </div>
+          <div class="service-card-right">
+            <span class="dot" id="dotMonitor"></span>
           </div>
         </div>
       </div>
     </div>
+    <div id="drawerHistoryContent" style="display:none">
+      <div class="audit-panel">
+        <div class="audit-toolbar">
+          <span class="audit-toolbar-title">下载审计记录</span>
+          <div class="audit-filter">
+            <select class="audit-author-select" id="auditAuthorSelect">
+              <option value="">全部作者</option>
+            </select>
+            <input type="text" class="audit-filter-input" id="auditFilterInput" placeholder="搜索全部字段..." />
+          </div>
+          <span class="audit-toolbar-count" id="auditTotalCount">0 条</span>
+        </div>
+        <div class="audit-table-wrap" id="auditTableWrap">
+          <table class="audit-table" id="auditTable">
+            <thead>
+              <tr>
+                <th class="col-time">时间</th>
+                <th class="col-author">作者</th>
+                <th class="col-title">标题</th>
+                <th class="col-size">大小</th>
+                <th class="col-duration">时长</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
+
+  <!-- 悬浮球 -->
+  <button class="fab-btn" id="fabBtn" title="状态面板" aria-label="打开状态面板">
+    <span class="fab-dot" id="fabDot"></span>
+    <span class="fab-icon" id="fabIcon">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+    </span>
+    <span class="fab-badge" id="fabBadge" style="display:none">0</span>
+  </button>
 
   <!-- SSE 断连提示横幅 -->
   <div class="sse-status-banner" id="sse-status-banner" style="display:none">
@@ -245,11 +330,6 @@
             </button>
           </div>
         </div>
-      </div>
-
-      <div class="offline-banner" id="offlineBanner" style="display:none">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        <span id="offlineBannerText">Go 服务离线，下载已暂停</span>
       </div>
 
       <div class="video-list" id="videoList">
@@ -835,6 +915,7 @@
 <script src="/static/js/api/state/db.js"></script>
 <script src="/static/js/api/state/ui.js"></script>
 <script src="/static/js/api/state/service.js"></script>
+<script src="/static/js/api/task.js"></script>
 <!-- 响应式渲染器 -->
 <script src="/static/js/component/reactiveRenderer.js"></script>
 <script src="/static/js/component/authorProgress.js"></script>
@@ -873,5 +954,71 @@
 <script src="/static/js/component/splash.js"></script>
 <script src="/static/js/component/historyPanel.js"></script>
 <script src="/static/js/app.js"></script>
+
+<!-- 短剧下载 iframe 容器 -->
+<iframe id="sniffFrame" src="/static/sniff/index.html" style="display:none; position:absolute; top:0; left:0; width:100%; height:100%; border:none; z-index:100;"></iframe>
+
+<!-- 模块切换逻辑 -->
+<script>
+(function() {
+  var currentModule = 'monitor';
+  var sniffFrame = document.getElementById('sniffFrame');
+  var tabMonitor = document.getElementById('tabMonitor');
+  var tabSniff = document.getElementById('tabSniff');
+  var appDiv = document.querySelector('.app');
+  var fabPanel = document.getElementById('fabPanel');
+  var tabsBar = document.getElementById('moduleTabsBar');
+  var trigger = document.getElementById('moduleHoverTrigger');
+  var hideTimer = null;
+
+  // 悬浮触发逻辑：鼠标移到顶部8px区域时弹出Tab栏
+  trigger.addEventListener('mouseenter', function() {
+    clearTimeout(hideTimer);
+    tabsBar.classList.add('visible');
+  });
+
+  tabsBar.addEventListener('mouseenter', function() {
+    clearTimeout(hideTimer);
+  });
+
+  trigger.addEventListener('mouseleave', function() {
+    hideTimer = setTimeout(function() {
+      tabsBar.classList.remove('visible');
+    }, 500);
+  });
+
+  tabsBar.addEventListener('mouseleave', function() {
+    hideTimer = setTimeout(function() {
+      tabsBar.classList.remove('visible');
+    }, 500);
+  });
+
+  window.switchModule = function(mod) {
+    if (mod === currentModule) return;
+    currentModule = mod;
+
+    if (mod === 'sniff') {
+      appDiv.style.display = 'none';
+      if (fabPanel) fabPanel.style.display = 'none';
+      sniffFrame.style.display = 'block';
+      tabMonitor.classList.remove('active');
+      tabSniff.classList.add('active');
+      document.title = '短剧下载器';
+      // 切换后自动隐藏Tab栏
+      tabsBar.classList.remove('visible');
+    } else {
+      sniffFrame.style.display = 'none';
+      appDiv.style.display = '';
+      if (fabPanel) fabPanel.style.display = '';
+      tabSniff.classList.remove('active');
+      tabMonitor.classList.add('active');
+      document.title = '微信视频号控制台';
+      hideTimer = setTimeout(function() {
+        tabsBar.classList.remove('visible');
+      }, 600);
+    }
+  };
+})();
+</script>
 </body>
 </html>

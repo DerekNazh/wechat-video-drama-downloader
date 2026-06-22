@@ -243,23 +243,31 @@ def delete_author_all_videos(author_id: str):
     video_ids = [v.video_id for v in videos]
     logger.info(f"[delete_author_all] 作者={author.name or author.source_author_id}, 视频数={len(video_ids)}, author_id={author_id}")
 
-    # 计算工作量
+    # 计算工作量（包含所有未完成任务：running/wait/pending/paused）
     total_tasks = 0
     try:
-        from core.service.task import TaskService
-        task_service = TaskService()
-        for task in task_service.get_downloading_tasks():
-            if task.get("video_id") in video_ids:
+        for task in db.list_download_tasks(status=None):
+            if task.video_id in video_ids and task.status in ("running", "wait", "pending", "paused"):
                 total_tasks += 1
     except Exception:
         pass
 
     total_files = sum(1 for v in videos if v.download_path)
+    # 收集作者根目录（下载/作者名/），而非视频类型子目录
+    download_root = None
+    try:
+        from config.settings import settings
+        download_root = Path(str(settings.wx_download_dir)).resolve()
+    except Exception:
+        pass
     author_dir_paths = set()
     for v in videos:
         if v.download_path:
             try:
-                author_dir_paths.add(Path(v.download_path).parent)
+                p = Path(v.download_path).resolve()
+                if download_root and str(p).startswith(str(download_root)):
+                    rel = p.relative_to(download_root)
+                    author_dir_paths.add(download_root / rel.parts[0])
             except Exception:
                 pass
     total_dirs = len(author_dir_paths)
@@ -298,26 +306,42 @@ def _do_delete_author_all(author_id: str, author_name: str, video_ids: list, vid
     dirs_deleted = 0
 
     try:
-        # 1. 取消正在下载的任务 (0% → 25%)
+        # Step 1: 立即停止该作者所有活跃任务（含 running/wait/pending/paused）
         emit_event("delete_author_progress", {
             "phase": "processing", "author_id": author_id, "step": "cancel_tasks",
             "progress": 5, "tasks_cancelled": 0, "tasks_total": total_tasks,
         })
+        active_statuses = ("running", "wait", "pending", "paused")
         try:
             from core.service.task import TaskService
             task_service = TaskService()
-            downloading_tasks = task_service.get_downloading_tasks()
-            for task in downloading_tasks:
-                if task.get("video_id") in video_ids:
-                    task_service.delete_task(task["id"])
+            for task in db.list_download_tasks(status=None):
+                if task.video_id not in video_ids or task.status not in active_statuses:
+                    continue
+                try:
+                    task_service.delete_task(task.task_id)
                     tasks_cancelled += 1
-                    pct = 5 + int(tasks_cancelled / max(total_tasks, 1) * 20)
-                    emit_event("delete_author_progress", {
-                        "phase": "processing", "author_id": author_id, "step": "cancel_tasks",
-                        "progress": pct, "tasks_cancelled": tasks_cancelled, "tasks_total": total_tasks,
-                    })
+                except Exception as e:
+                    _logger.warning(f"[delete_author_all] 取消任务失败: {task.task_id}, {e}")
+                pct = 5 + int(tasks_cancelled / max(total_tasks, 1) * 20)
+                emit_event("delete_author_progress", {
+                    "phase": "processing", "author_id": author_id, "step": "cancel_tasks",
+                    "progress": pct, "tasks_cancelled": tasks_cancelled, "tasks_total": total_tasks,
+                })
         except Exception as e:
             _logger.warning(f"[delete_author_all] 取消任务异常: {e}")
+
+        # Step 1.5: 清理该作者所有任务记录（含已取消/done 等）
+        try:
+            cleaned = 0
+            for task in db.list_download_tasks(status=None):
+                if task.video_id in video_ids:
+                    db.delete_download_task(task.task_id)
+                    cleaned += 1
+            if cleaned > 0:
+                _logger.info(f"[delete_author_all] 已清理 {cleaned} 个任务记录")
+        except Exception as e:
+            _logger.warning(f"[delete_author_all] 清理任务记录异常: {e}")
 
         emit_event("delete_author_progress", {
             "phase": "processing", "author_id": author_id, "step": "cancel_tasks",
@@ -325,22 +349,31 @@ def _do_delete_author_all(author_id: str, author_name: str, video_ids: list, vid
         })
 
         # 2. 删除视频文件 + 数据库记录 (25% → 70%)
+        # 收集作者根目录（下载/作者名/），而非视频类型子目录（下载/作者名/直播回放/）
+        download_root = None
+        try:
+            from config.settings import settings
+            download_root = Path(str(settings.wx_download_dir)).resolve()
+        except Exception:
+            pass
+
         author_dirs = set()
         for i, v in enumerate(videos):
             if v.download_path:
                 try:
-                    p = Path(v.download_path)
-                    if p.parent.exists():
-                        author_dirs.add(p.parent)
+                    p = Path(v.download_path).resolve()
+                    # 向上遍历到下载根目录的直接子目录（即作者根目录）
+                    if download_root and str(p).startswith(str(download_root)):
+                        rel = p.relative_to(download_root)
+                        # rel.parts[0] 就是作者名目录（如 "女子象棋大师单欣"）
+                        author_root = download_root / rel.parts[0]
+                        author_dirs.add(author_root)
                     if p.exists():
                         p.unlink()
                         files_deleted += 1
                 except Exception:
                     pass
             if v.video_id:
-                task = db.get_download_task_by_video_id(v.video_id)
-                if task:
-                    db.delete_download_task(task.task_id)
                 db.delete_author_video(v.video_id)
 
             pct = 25 + int((i + 1) / max(len(videos), 1) * 45)

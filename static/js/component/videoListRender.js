@@ -4,6 +4,17 @@ function escapeAttr(str) {
   return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function buildPausedBadgeHTML(pct, taskId) {
+  var safeTaskId = escapeAttr(taskId || '');
+  return '<div class="paused-header">' +
+    '<span class="paused-icon">‖</span>' +
+    '<span class="progress-percent">' + pct + '%</span>' +
+    '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + safeTaskId + '\')" title="取消下载" aria-label="取消下载">×</button>' +
+  '</div>' +
+  '<div class="progress-bar"><div class="paused-fill" style="width:' + pct + '%"></div></div>' +
+  '<span class="paused-label">已暂停</span>';
+}
+
 // 当前视频类型：short_video | live_replay
 var _currentVideoType = 'short_video';
 
@@ -45,15 +56,11 @@ async function switchVideoType(type) {
       const data = await res.json();
 
       if (data.code === 0 && Array.isArray(data.data)) {
-        const username = _currentAuthor.username;
-        // 更新 _authorVideosData（必须经过 mapVideo 转换，否则 downloaded 字段缺失）
-        _authorVideosData[username] = { videos: {} };
-        data.data.forEach(v => {
-          const mapped = mapVideo(v);
-          _authorVideosData[username].videos[v.video_id] = mapped;
-        });
-        // 重新渲染
-        const videos = Object.values(_authorVideosData[username].videos);
+        const username = _currentAuthor?.username || '';
+        const mappedVideos = data.data.map(v => mapVideo(v));
+        State.videos.setAuthorVideos(username, mappedVideos);
+        _authorVideosData = State.videos.allGrouped();
+        const videos = State.videos.getAuthorVideos(username);
         const currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
         renderVideoList(videos, currentFilter);
 
@@ -101,12 +108,16 @@ function renderVideoList(videos, filter = 'all') {
   const downloadingIds = new Set();
   const progressMap = {};
 
-  _activeTasks.forEach(task => {
+  State.tasks.all().forEach(task => {
     const videoId = task.video_id || '';
-    // 已完成/错误的任务不算"正在下载"
-    if (videoId && task.status !== 'done' && task.status !== 'completed' && task.status !== 'error') {
-      downloadingIds.add(videoId);
+    if (!videoId) return;
+    // progressMap 追踪所有活跃任务（含 failed），用于 badge 渲染
+    if (task.status !== 'done' && task.status !== 'completed' && task.status !== 'error') {
       progressMap[videoId] = task;
+    }
+    // downloadingIds 只追踪"进行中"任务（不含 failed），用于 tab 过滤
+    if (task.status !== 'done' && task.status !== 'completed' && task.status !== 'error' && task.status !== 'failed') {
+      downloadingIds.add(videoId);
     }
   });
 
@@ -174,7 +185,7 @@ function renderVideoList(videos, filter = 'all') {
     const coverUrl = video.cover_url || '';
     const fallbackAttr = coverUrl ? ` data-src-fallback="${coverUrl}"` : '';
     const coverHtml = coverUrl
-      ? `<img data-src="/api/video/cover/${encodeURIComponent(_currentAuthor.username)}/${video.id}" class="lazy-img"${fallbackAttr}>`
+      ? `<img data-src="/api/video/cover/${encodeURIComponent(_currentAuthor?.username || '')}/${video.id}" class="lazy-img"${fallbackAttr}>`
       : `<div class="thumb-placeholder">o</div>`;
 
     const duration = video.duration || 0;
@@ -195,25 +206,22 @@ function renderVideoList(videos, filter = 'all') {
     } else if (downloadingIds.has(video.id)) {
       const progress = progressMap[video.id];
       const pct = progress?.percent || 0;
+      const isWaiting = progress?.status === 'wait' || progress?.status === 'pending';
       const isPaused = progress?.status === 'paused';
-      if (isPaused) {
+      const isFailed = progress?.status === 'failed';
+      if (isFailed) {
+        statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload('${video.id}')" title="重新下载" aria-label="重新下载">↻</button></span>`;
+      } else if (isWaiting) {
+        // 等待中：排队等待并发槽位，会自动开始
+        const taskId = progress?.id || '';
+        statusBadge = `<span class="video-status-badge waiting" title="等待并发槽位，将自动开始下载"><span class="waiting-text">等待中</span><button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button></span>`;
+      } else if (isPaused) {
         const rawDownloaded = progress?.downloaded || 0;
         const rawSize = progress?.size || 0;
         const downloaded = formatFileSize(rawDownloaded) || '--';
         const size = formatFileSize(rawSize) || '--';
         const taskId = progress?.id || '';
-        statusBadge = `
-          <span class="video-status-badge paused" title="服务离线，下载已暂停">
-            <div class="download-header">
-              <span class="progress-percent">${pct}%</span>
-              <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button>
-            </div>
-            <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill paused-fill" style="width:${pct}%"></div></div>
-            <div class="download-stats">
-              <span class="stat-size">${downloaded}/${size}</span>
-              <span class="stat-divider"></span><span class="stat-speed muted">已暂停</span>
-            </div>
-          </span>`;
+        statusBadge = `<span class="video-status-badge paused" title="暂停 ${pct}% | ${downloaded}/${size} | 服务离线">${buildPausedBadgeHTML(pct, taskId)}</span>`;
       } else {
         const rawDownloaded = progress?.downloaded || 0;
         const rawSize = progress?.size || 0;
@@ -236,6 +244,9 @@ function renderVideoList(videos, filter = 'all') {
             </div>
           </span>`;
       }
+    } else if (progressMap[video.id] && progressMap[video.id].status === 'failed') {
+      // failed 任务不在 downloadingIds 中，但需要在 progressMap 中找到以渲染 failed badge
+      statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload('${video.id}')" title="重新下载" aria-label="重新下载">↻</button></span>`;
     } else {
       statusBadge = `<span class="video-status-badge pending">待下载</span>`;
     }
@@ -293,11 +304,14 @@ function updateVideoListIncremental(videos, filter) {
 
   const downloadingIds = new Set();
   const progressMap = {};
-  _activeTasks.forEach(task => {
+  State.tasks.all().forEach(task => {
     const videoId = task.video_id || '';
-    if (videoId && task.status !== 'done' && task.status !== 'completed' && task.status !== 'error') {
-      downloadingIds.add(videoId);
+    if (!videoId) return;
+    if (task.status !== 'done' && task.status !== 'completed' && task.status !== 'error') {
       progressMap[videoId] = task;
+    }
+    if (task.status !== 'done' && task.status !== 'completed' && task.status !== 'error' && task.status !== 'failed') {
+      downloadingIds.add(videoId);
     }
   });
 
@@ -384,31 +398,30 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
     } else if (downloadingIds.has(video.id)) {
       const task = progressMap[video.id];
       if (task) {
-        if (task.status === 'paused') {
-          if (!badge.classList.contains('paused')) {
-            badge.className = 'video-status-badge paused';
-            const pct = task.percent || 0;
-            const dlStr = formatFileSize(task.downloaded || 0) || '--';
-            const szStr = formatFileSize(task.size || 0) || '--';
-            badge.innerHTML = `
-              <div class="download-header">
-                <span class="progress-percent">${pct}%</span>
-                <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${task.id || ''}')" title="取消下载" aria-label="取消下载">×</button>
-              </div>
-              <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill paused-fill" style="width:${pct}%"></div></div>
-              <div class="download-stats">
-                <span class="stat-size">${dlStr}/${szStr}</span>
-                <span class="stat-divider"></span><span class="stat-speed muted">已暂停</span>
-              </div>`;
-            badge.title = '服务离线，下载已暂停';
+        if (task.status === 'failed') {
+          if (!badge.classList.contains('failed')) {
+            badge.className = 'video-status-badge failed';
+            badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + (task.video_id || '') + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+            badge.title = '恢复下载失败';
+          }
+        } else if (task.status === 'wait' || task.status === 'pending') {
+          // 等待中：排队等待并发槽位（pending = 已提交等待 Go 处理，语义同 wait）
+          if (!badge.classList.contains('waiting')) {
+            badge.className = 'video-status-badge waiting';
+            badge.innerHTML = '<span class="waiting-text">等待中</span><button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + (task.id || '') + '\')" title="取消下载" aria-label="取消下载">×</button>';
+            badge.title = '等待并发槽位，将自动开始下载';
           }
         } else if (badge.classList.contains('paused') && !badge.classList.contains('resuming')) {
           // paused → resuming transition
           badge.className = 'video-status-badge resuming';
-          const pct = task.percent || 0;
-          badge.textContent = '恢复中 (' + pct + '%)';
+          badge.textContent = '恢复中';
           badge.title = '正在恢复下载...';
           // actual downloading badge will replace on next progress SSE
+        } else if (badge.classList.contains('waiting') && !badge.classList.contains('resuming')) {
+          // waiting → resuming transition (Go 分配了槽位，正在启动)
+          badge.className = 'video-status-badge resuming';
+          badge.textContent = '恢复中';
+          badge.title = '正在启动下载...';
         } else if (!badge.classList.contains('downloading') && !badge.classList.contains('resuming')) {
           badge.className = 'video-status-badge downloading';
           const pct = task.percent || 0;
@@ -444,6 +457,12 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
           badge.title = `${formatFileSize(task.downloaded || 0) || '--'}/${formatFileSize(task.size || 0) || '--'}`;
         }
       }
+    } else if (progressMap[video.id] && progressMap[video.id].status === 'failed') {
+      if (!badge.classList.contains('failed')) {
+        badge.className = 'video-status-badge failed';
+        badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + (progressMap[video.id].video_id || video.id) + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+        badge.title = '恢复下载失败';
+      }
     } else {
       if (!badge.classList.contains('pending')) {
         badge.className = 'video-status-badge pending';
@@ -461,13 +480,65 @@ function _removeRowAndUpdatePagination(row) {
 
   row.remove();
 
-  // 重新渲染当前页以补全数据（避免页面缺行）
-  var videos = Object.values(_authorVideosData[_currentAuthor?.username]?.videos || {});
-  if (videos.length > 0) {
+  var remainingRows = listEl.querySelectorAll('.video-row');
+
+  // 当前页删空了
+  if (remainingRows.length === 0) {
+    var videos = Object.values(_authorVideosData[_currentAuthor?.username]?.videos || {});
     var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
+    var downloadingIds = _getDownloadingIds();
+    var filtered = getFilteredVideos(videos, currentFilter, downloadingIds);
+
+    if (filtered.length === 0) {
+      var videoView = State.ui.getVideoViewMode();
+      var viewClass = (videoView !== 'list') ? (videoView + '-view') : '';
+      listEl.className = 'video-list no-animation ' + viewClass;
+      listEl.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="4" x2="22" y2="20"/></svg><div class="empty-title">没有符合条件的视频</div></div>';
+      return;
+    }
+    // 还有数据但当前页空了，回退到上一页重新渲染
+    if (_currentPageNum > 1) _currentPageNum--;
     renderVideoList(videos, currentFilter);
-  } else {
-    listEl.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="12" cy="12" r="3"/><line x1="2" y1="4" x2="22" y2="20"/></svg><div class="empty-title">没有符合条件的视频</div></div>';
+    return;
+  }
+
+  // 当前页还剩一半以上，只更新分页数字
+  if (remainingRows.length >= Math.floor(PAGE_SIZE / 2)) {
+    _updatePaginationCount();
+    return;
+  }
+
+  // 当前页少于一半，触发补行渲染
+  var videos = Object.values(_authorVideosData[_currentAuthor?.username]?.videos || {});
+  var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
+  renderVideoList(videos, currentFilter);
+}
+
+function _getDownloadingIds() {
+  var downloadingIds = new Set();
+  State.tasks.all().forEach(function(task) {
+    if (task.video_id && task.status !== 'done' && task.status !== 'completed' && task.status !== 'error' && task.status !== 'failed') {
+      downloadingIds.add(task.video_id);
+    }
+  });
+  return downloadingIds;
+}
+
+function _updatePaginationCount() {
+  var listEl = document.getElementById("videoList");
+  if (!listEl) return;
+
+  var videos = Object.values(_authorVideosData[_currentAuthor?.username]?.videos || {});
+  var currentFilter = document.querySelector('.video-tab.active')?.dataset.tab || 'all';
+  var downloadingIds = _getDownloadingIds();
+  var filtered = getFilteredVideos(videos, currentFilter, downloadingIds);
+  var totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  if (totalPages < 1) totalPages = 1;
+
+  var paginationEl = listEl.querySelector('.pagination');
+  if (paginationEl) {
+    var newPagination = buildPagination(totalPages, filtered.length);
+    paginationEl.outerHTML = newPagination;
   }
 }
 
@@ -503,6 +574,51 @@ function updateSingleVideoProgress(videoId, task) {
     if (speedEl) {
       speedEl.textContent = speed;
       speedEl.classList.toggle('muted', !hasSpeed);
+    }
+    var cancelBtn = badge.querySelector('.cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.setAttribute('onclick', "event.stopPropagation(); cancelDownload('" + (task.id || '') + "')");
+    }
+  } else if (badge.classList.contains('resuming')) {
+    // resuming 状态：等进度真正更新再切换到 downloading
+    if (pct > 0 || hasSpeed) {
+      badge.className = 'video-status-badge downloading';
+      var taskId = task.id || '';
+      badge.innerHTML =
+        '<div class="download-header">' +
+          '<span class="progress-percent">' + pct + '%</span>' +
+          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
+        '</div>' +
+        '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="download-stats">' +
+          '<span class="stat-size">' + dlStr + '/' + szStr + '</span>' +
+          '<span class="stat-divider"></span><span class="stat-speed' + (hasSpeed ? '' : ' muted') + '">' + speed + '</span>' +
+        '</div>';
+      row.classList.add('downloading');
+    }
+    // 否则保持 resuming，等下一次 progress SSE
+  } else if (badge.classList.contains('waiting') || badge.classList.contains('paused') || badge.classList.contains('failed')) {
+    // waiting/paused/failed 状态不应被 task_progress SSE 覆盖为 downloading
+    // 只更新 cancel 按钮的 task_id
+    var cancelBtn = badge.querySelector('.cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.setAttribute('onclick', "event.stopPropagation(); cancelDownload('" + (task.id || '') + "')");
+    }
+    // wait 状态收到有效进度时，说明 Go 分配了槽位，切换为 downloading
+    if (badge.classList.contains('waiting') && (pct > 0 || hasSpeed)) {
+      badge.className = 'video-status-badge downloading';
+      var taskId = task.id || '';
+      badge.innerHTML =
+        '<div class="download-header">' +
+          '<span class="progress-percent">' + pct + '%</span>' +
+          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
+        '</div>' +
+        '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
+        '<div class="download-stats">' +
+          '<span class="stat-size">' + dlStr + '/' + szStr + '</span>' +
+          '<span class="stat-divider"></span><span class="stat-speed' + (hasSpeed ? '' : ' muted') + '">' + speed + '</span>' +
+        '</div>';
+      row.classList.add('downloading');
     }
   } else {
 
