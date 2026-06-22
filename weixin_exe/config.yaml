@@ -20,7 +20,7 @@ api:
   hostname: 127.0.0.1
   port: 2022
 proxy:
-  system: true
+  system: false
   hostname: 127.0.0.1
   port: 2023
   skipInstallRootCert: false
