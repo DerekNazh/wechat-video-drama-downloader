@@ -36,6 +36,9 @@ Thumbs.db
 .superpowers/
 .pytest_cache/
 
+# Docs (本地保留，不上传)
+docs/
+
 # Go binary logs
 weixin_exe/app.log
 weixin_exe/gopeed.db
