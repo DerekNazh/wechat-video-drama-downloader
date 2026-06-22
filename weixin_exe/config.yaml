@@ -1,55 +1,47 @@
 debug:
   error: false
-
 pagespy:
   enabled: false
-
 inject:
-  globalScript: "global.js"
-
+  globalScript: global.js
 download:
   defaultHighest: false
-  filenameTemplate: "作者视频/{{author}}/{{created_at}}_{{title}}_{{spec}}"
-  dir: "../下载"
+  filenameTemplate: 作者视频/{{author}}/{{created_at}}_{{title}}_{{spec}}
+  dir: ../下载
   pauseWhenDownload: false
   playDoneAudio: true
   frontend: false
   forceCheckAllFeeds: false
   remoteServer:
     enabled: false
-    protocol: "http"
-    hostname: "192.168.1.2"
+    protocol: http
+    hostname: 192.168.1.2
     port: 2022
-
 api:
-  protocol: "http"
-  hostname: "127.0.0.1"
+  protocol: http
+  hostname: 127.0.0.1
   port: 2022
-
 proxy:
   system: false
-  hostname: "127.0.0.1"
+  hostname: 127.0.0.1
   port: 2023
   skipInstallRootCert: false
-
 channels:
   disableLocationToHome: false
-
 mp:
   disabled: true
   remoteServer:
-    protocol: "http"
-    hostname: ""
+    protocol: http
+    hostname: ''
     port: 80
-  refreshToken: "wx_channels_download"
-  tokenFilepath: ""
+  refreshToken: wx_channels_download
+  tokenFilepath: ''
   refreshSkipMinutes: 20
   maxWebsocketClients: 5
-
 cloudflare:
-  accountId: ""
-  apiToken: ""
-  refreshToken: "wx_channels_download"
-  adminToken: ""
-  workerName: "mp-rss-api"
-  d1Name: "mp-rss-db"
+  accountId: ''
+  apiToken: ''
+  refreshToken: wx_channels_download
+  adminToken: ''
+  workerName: mp-rss-api
+  d1Name: mp-rss-db
