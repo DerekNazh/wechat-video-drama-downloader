@@ -196,7 +196,7 @@ class ResDownloadService:
 
             # 设置目标字段
             data["UpstreamProxy"] = upstream
-            data["OpenProxy"] = True
+            data["OpenProxy"] = False
             data["AutoProxy"] = False
             data["SaveDirectory"] = save_dir
             data["Type"] = "video"
