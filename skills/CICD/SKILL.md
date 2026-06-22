@@ -6,3 +6,4 @@
 4. 打包：`.venv\Scripts\python build.py`，产物在 dist/ 下
 5. 测试：运行 dist/ 下的 exe，验证视频号+短剧两个功能
 6. 存档：`git add -A && git commit -m "release: vx.y.z 描述"`
+7. 同步：`git push origin master` 推送到 GitHub 远程仓库
