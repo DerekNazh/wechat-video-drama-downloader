@@ -378,12 +378,13 @@ def run_gui():
         # WebView2 内核启动时读取代理设置，运行中改注册表不会刷新
         _wait_for_system_proxy()
 
-        _shutdown_done = threading.Event()
+        _shutdown_started = threading.Event()
 
         def on_closing():
             """窗口关闭：立即隐藏窗口，后台执行优雅退出"""
-            if _shutdown_done.is_set():
+            if _shutdown_started.is_set():
                 return False
+            _shutdown_started.set()
 
             logger.info("[webview] 窗口关闭请求，隐藏窗口并后台执行优雅退出...")
             window.hide()
@@ -436,7 +437,7 @@ def run_gui():
                 except Exception as e:
                     logger.error(f"[webview] res_download 停止异常: {e}")
 
-                _shutdown_done.set()
+                _shutdown_started.set()
                 logger.info("[webview] 清理完成，退出进程")
                 os._exit(0)
 

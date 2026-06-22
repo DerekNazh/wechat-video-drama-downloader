@@ -188,7 +188,9 @@ class ResDownloadService:
                 return False
 
             # 检查是否已配置
-            if data.get("UpstreamProxy") == upstream and data.get("SaveDirectory") == save_dir:
+            if (data.get("UpstreamProxy") == upstream
+                    and data.get("SaveDirectory") == save_dir
+                    and data.get("Type") == "video"):
                 logger.info("[配置] res_download 配置已正确，无需修改")
                 return True
 
@@ -197,6 +199,7 @@ class ResDownloadService:
             data["OpenProxy"] = True
             data["AutoProxy"] = False
             data["SaveDirectory"] = save_dir
+            data["Type"] = "video"
 
             # POST 回写
             config_bytes = json.dumps(data)
@@ -228,14 +231,33 @@ class ResDownloadService:
             return False
 
     def unset_proxy(self) -> bool:
-        """关闭系统代理（调 res_download /api/proxy-unset）"""
+        """关闭系统代理：优先调 res_download API，进程不在则直接改注册表"""
+        if self.is_process_running():
+            try:
+                resp = requests.get(f"{self.service_url}/api/proxy-unset", timeout=5)
+                resp.close()
+                logger.info("[代理] 系统代理已关闭（API）")
+                return True
+            except Exception as e:
+                logger.warning("[代理] API 关闭失败，回退注册表: %s", e)
+
+        # 进程不在或 API 失败，直接改注册表
+        return self._unset_proxy_registry()
+
+    def _unset_proxy_registry(self) -> bool:
+        """直接修改注册表关闭系统代理（res_download 进程不在时的回退方案）"""
         try:
-            resp = requests.get(f"{self.service_url}/api/proxy-unset", timeout=5)
-            resp.close()
-            logger.info("[代理] 系统代理已关闭")
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings", 0, winreg.KEY_WRITE) as key:
+                current, _ = winreg.QueryValueEx(key, "ProxyEnable")
+                if current == 0:
+                    logger.info("[代理] ProxyEnable 已为 0，无需修改")
+                    return True
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 0)
+                logger.info("[代理] 已通过注册表关闭系统代理")
             return True
         except Exception as e:
-            logger.warning("[代理] 关闭系统代理失败: %s", e)
+            logger.error("[代理] 注册表清理失败: %s", e)
             return False
 
     def stop(self, wait_timeout: int = 10) -> bool:
