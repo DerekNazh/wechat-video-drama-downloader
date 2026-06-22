@@ -14,10 +14,9 @@ import sys
 
 logger = logging.getLogger("single_instance")
 
-MUTEX_NAME = "VideoMonitor_Downloader_SingleInstance_Mutex"
-# 匹配 "视频号监控控制台 v1.1.1" 或 "视频号监控控制台 v1.1.1 - 加入交流群..."
-# 不匹配 "新智能剪辑 v1.0.1"
-WINDOW_TITLE_PATTERN = re.compile(r"^视频号监控控制台\s+v[\d.]+")
+MUTEX_NAME = "WechatVideoDrama_Downloader_SingleInstance_Mutex"
+# 匹配 "微信号视频短剧下载器 v1.1.1" 或 "微信号视频短剧下载器 v1.1.1 - 加入交流群..."
+WINDOW_TITLE_PATTERN = re.compile(r"^微信号视频短剧下载器\s+v[\d.]+")
 ERROR_ALREADY_EXISTS = 183
 
 
@@ -113,7 +112,7 @@ def ensure_single_instance(api=None):
         _activate_existing(api)
         api.show_message_box(
             "应用已在运行！\n已将运行中的窗口激活到前台。",
-            "视频号监控控制台",
+            "微信号视频短剧下载器",
         )
         sys.exit(0)
 

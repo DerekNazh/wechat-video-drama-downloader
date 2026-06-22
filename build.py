@@ -1,5 +1,5 @@
 """
-打包脚本 - 视频号监控控制台
+打包脚本 - 微信号视频短剧下载器
 
 用法:
   python build.py                      打包，版本不变，输出带时间戳命名
@@ -7,7 +7,7 @@
   python build.py --version 2.0.0      打包 + 指定版本
   python build.py clean                清理 dist/build
 
-产物命名: 视频号监控控制台_版本_日期_时间
+产物命名: 微信号视频短剧下载器_版本_日期_时间
 """
 import re
 import sys
@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).parent.resolve()
 SPEC_FILE = ROOT / "video_download.spec"
-DIST_DIR = ROOT / "dist" / "视频号监控控制台"
+DIST_DIR = ROOT / "dist" / "微信号视频短剧下载器"
 ENV_FILE = ROOT / "config" / ".env"
-PRODUCT_NAME = "视频号监控控制台"
+PRODUCT_NAME = "微信号视频短剧下载器"
 
 # 打包后需要复制到根目录的文件/目录
 BUNDLE_FILES = {
@@ -126,7 +126,7 @@ def restore_user_data(backed_up):
 
 
 def _rename_dist(version: str) -> Path:
-    """将 dist/视频号监控控制台 重命名为 视频号监控控制台_版本_日期_时间"""
+    """将 dist/微信号视频短剧下载器 重命名为 微信号视频短剧下载器_版本_日期_时间"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder_name = f"{PRODUCT_NAME}_{version}_{timestamp}"
     new_path = ROOT / "dist" / folder_name
@@ -240,7 +240,7 @@ def build(bump_target: str | None = None) -> None:
     _make_zip(dist_path)
 
     # 输出
-    exe_path = dist_path / "视频号监控控制台.exe"
+    exe_path = dist_path / "微信号视频短剧下载器.exe"
     if exe_path.exists():
         mb = exe_path.stat().st_size / 1024 / 1024
         logger.info(f"\n=== 构建完成 ===")

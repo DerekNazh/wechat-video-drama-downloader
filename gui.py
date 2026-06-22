@@ -366,7 +366,7 @@ def run_gui():
 
         ads_suffix = " - 加入交流群：https://docs.qq.com/doc/DRVByZHBGREtJT1pG" if settings.ads_enabled else ""
         window = webview.create_window(
-            title=f"视频号监控控制台 v{settings.project_version}{ads_suffix}",
+            title=f"微信号视频短剧下载器 v{settings.project_version}{ads_suffix}",
             url=base_url,
             width=950,
             height=750,
