@@ -34,6 +34,8 @@ BUNDLE_FILES = {
     ROOT / "weixin_exe" / "config.yaml": DIST_DIR / "lib" / "config.yaml",
     ROOT / "weixin_exe" / "wx_video_download.exe": DIST_DIR / "lib" / "wx_video_download.exe",
     ROOT / "weixin_exe" / "gopeed.db": DIST_DIR / "lib" / "gopeed.db",
+    ROOT / "weixin_exe" / "global.js": DIST_DIR / "lib" / "global.js",
+    ROOT / "res_download" / "res_download.exe": DIST_DIR / "lib" / "res_download.exe",
     ROOT / "static": DIST_DIR / "static",
 }
 
