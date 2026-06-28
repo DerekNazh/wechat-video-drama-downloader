@@ -64,6 +64,7 @@ class _EnvConfig:
     # ===== 视频号自动监控配置 =====
     wx_status_interval: int = 5        # 服务状态轮询间隔（秒）
     wx_download_dir: str = "下载"      # 下载目录（相对 app_root）
+    short_drama_download_dir: str = "下载/短剧"  # 短剧下载目录（相对 app_root）
     max_concurrent: int = 5            # 最大并发下载数
     doc_sync_interval: int = 60       # 腾讯文档监控轮询间隔（分钟）
 
@@ -491,6 +492,7 @@ class SettingsManager:
             # 视频号自动监控配置
             wx_status_interval=int(os.getenv("WX_STATUS_INTERVAL", "5")),
             wx_download_dir=os.getenv("WX_DOWNLOAD_DIR", "下载"),
+            short_drama_download_dir=os.getenv("SHORT_DRAMA_DOWNLOAD_DIR", "下载/短剧"),
             max_concurrent=int(os.getenv("MAX_CONCURRENT", "5")),
             doc_sync_interval=int(os.getenv("DOC_SYNC_INTERVAL", "60")),
 
@@ -535,6 +537,15 @@ class SettingsManager:
     def wx_download_dir(self):
         """获取下载目录的绝对路径（基于 app_root 解析）"""
         raw = self._config.wx_download_dir
+        p = Path(raw)
+        if p.is_absolute():
+            return p
+        return self.app_root / raw
+
+    @property
+    def short_drama_download_dir(self):
+        """获取短剧下载目录的绝对路径（基于 app_root 解析）"""
+        raw = self._config.short_drama_download_dir
         p = Path(raw)
         if p.is_absolute():
             return p

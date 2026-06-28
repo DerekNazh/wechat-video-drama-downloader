@@ -7,7 +7,7 @@ inject:
 download:
   defaultHighest: false
   filenameTemplate: '{{created_at}}_{{title}}_{{spec}}'
-  dir: ../下载
+  dir: ../下载/作者资源
   pauseWhenDownload: false
   playDoneAudio: true
   frontend: false
