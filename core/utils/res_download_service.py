@@ -189,8 +189,7 @@ class ResDownloadService:
 
             # 检查是否已配置
             if (data.get("UpstreamProxy") == upstream
-                    and data.get("SaveDirectory") == save_dir
-                    and data.get("Type") == "video"):
+                    and data.get("SaveDirectory") == save_dir):
                 logger.info("[配置] res_download 配置已正确，无需修改")
                 return True
 
@@ -199,7 +198,6 @@ class ResDownloadService:
             data["OpenProxy"] = True
             data["AutoProxy"] = False
             data["SaveDirectory"] = save_dir
-            data["Type"] = "video"
 
             # POST 回写
             config_bytes = json.dumps(data)
@@ -213,11 +211,30 @@ class ResDownloadService:
                 return False
 
             logger.info("[配置] res_download 配置注入完成: UpstreamProxy=%s, SaveDirectory=%s", upstream, save_dir)
+
+            # 设置嗅探类型为仅视频（Type 走独立接口 /api/set-type，不在 get-config 里）
+            self._set_type_video()
+
             return True
 
         except Exception as e:
             logger.warning("[配置] 注入配置失败: %s", e)
             return False
+
+    def _set_type_video(self) -> None:
+        """设置嗅探类型为仅视频（调 /api/set-type）"""
+        try:
+            resp = requests.post(
+                f"{self.service_url}/api/set-type",
+                json={"type": "video"},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                logger.info("[配置] 嗅探类型已设为仅视频")
+            else:
+                logger.warning("[配置] 设置嗅探类型失败: HTTP %d", resp.status_code)
+        except Exception as e:
+            logger.warning("[配置] 设置嗅探类型失败: %s", e)
 
     def open_proxy(self) -> bool:
         """开启系统代理（调 res_download /api/proxy-open）"""
