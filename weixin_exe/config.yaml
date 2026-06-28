@@ -6,7 +6,7 @@ inject:
   globalScript: global.js
 download:
   defaultHighest: false
-  filenameTemplate: 作者视频/{{author}}/{{created_at}}_{{title}}_{{spec}}
+  filenameTemplate: '{{created_at}}_{{title}}_{{spec}}'
   dir: ../下载
   pauseWhenDownload: false
   playDoneAudio: true
