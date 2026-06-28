@@ -187,6 +187,9 @@ class ResDownloadService:
                 logger.warning("[配置] res_download 配置 data 字段格式异常")
                 return False
 
+            # 嗅探类型每次都要设置（Type 走独立接口 /api/set-type，不在 get-config 里）
+            self._set_type_video()
+
             # 检查是否已配置
             if (data.get("UpstreamProxy") == upstream
                     and data.get("SaveDirectory") == save_dir):
@@ -211,9 +214,6 @@ class ResDownloadService:
                 return False
 
             logger.info("[配置] res_download 配置注入完成: UpstreamProxy=%s, SaveDirectory=%s", upstream, save_dir)
-
-            # 设置嗅探类型为仅视频（Type 走独立接口 /api/set-type，不在 get-config 里）
-            self._set_type_video()
 
             return True
 
