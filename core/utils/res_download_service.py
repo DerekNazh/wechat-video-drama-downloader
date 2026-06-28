@@ -173,7 +173,7 @@ class ResDownloadService:
         """
         try:
             upstream = f"http://127.0.0.1:{self.upstream_port}"
-            save_dir = str(settings.wx_download_dir)
+            save_dir = str(Path(settings.wx_download_dir) / "短剧")
 
             # GET 当前配置
             resp = requests.get(f"{self.service_url}/api/get-config", timeout=5)

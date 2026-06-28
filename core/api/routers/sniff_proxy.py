@@ -90,7 +90,7 @@ async def _handle_direct_download(request: Request) -> Response:
         return await _proxy_request(request)
 
     save_dir = str(settings.wx_download_dir)
-    app_dir = Path(save_dir) / app_id
+    app_dir = Path(save_dir) / "短剧" / app_id
 
     # 序号 = 该短剧目录已有文件数 + 1
     seq = sum(1 for f in app_dir.iterdir() if f.is_file()) + 1 if app_dir.is_dir() else 1
