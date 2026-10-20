@@ -50,3 +50,7 @@ data/*.db-journal
 
 # 本地配置（含密钥/版本等运行时配置，不入库；模板见 config/.env.example）
 config/.env
+
+# 测试缓存/生成素材
+.pytest_cache/
+tests/.assets/

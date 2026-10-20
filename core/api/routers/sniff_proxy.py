@@ -7,11 +7,12 @@ Python 已有路由均带二级前缀（/api/service/、/api/video/ 等），无
 - /api/direct-download: Python 自行下载，命名规则 短剧ID_序号_视频ID.mp4
   序号 = 目标短剧目录已有文件数 + 1
 """
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import APIRouter, Request
@@ -43,6 +44,7 @@ DIRECT_PROXY_PATHS = frozenset({
     "/api/install",
     "/api/preview",
     "/api/open-folder",
+    "/api/drama-metadata",
     "/api/cert",
     "/api/set-system-password",
     "/api/wx-file-decode",
@@ -52,6 +54,19 @@ DIRECT_PROXY_PATHS = frozenset({
 
 def _parse_download_url(download_url: str) -> tuple:
     """从 URL 提取短剧ID、视频ID、后缀
+
+    真实场景校验（2026-10-21 用 457 条 author_videos 真实 URL 验证）：
+    - 腾讯短剧: finder.video.qq.com/251/20302/stodownload?token=...&encfilekey=...
+      路径段恒为固定值（20302），若按"路径倒数第二段"取 video_id，
+      同一短剧所有集数共享同一 video_id → 去重逻辑把不同视频当成已存在
+      直接跳过 → 用户看到"下载不了"。必须从 query 提取唯一标识。
+    - 第三方短剧 CDN: cdn.example.com/episode/video123/video.mp4 → 路径规则可用。
+
+    视频ID 三级提取：
+    1. query 显式标识（vid / video_id / id）
+    2. query 签名凭证（token / encfilekey）→ md5 前缀 12 位 + "v" 前缀
+       （签名可达数百字符，直接做文件名会超 Windows 255 字节上限）
+    3. 路径倒数第二段（兼容第三方 CDN）
 
     Returns: (app_id, video_id, suffix)
     """
@@ -64,9 +79,25 @@ def _parse_download_url(download_url: str) -> tuple:
     host = parsed.hostname or ""
     app_id = host.split(".")[0] if "." in host else ""
 
-    # 视频ID: 路径倒数第二段
-    parts = [p for p in path_clean.split("/") if p]
-    video_id = parts[-2] if len(parts) >= 2 else ""
+    query = parse_qs(parsed.query)
+    video_id = ""
+    # 1) 显式标识
+    for key in ("vid", "video_id", "id"):
+        val = query.get(key)
+        if val and val[0]:
+            video_id = val[0][:64]
+            break
+    # 2) 签名凭证哈希（腾讯 finder 短剧等）
+    if not video_id:
+        for key in ("token", "encfilekey"):
+            val = query.get(key)
+            if val and val[0]:
+                video_id = "v" + hashlib.md5(val[0].encode("utf-8", "ignore")).hexdigest()[:12]
+                break
+    # 3) 路径倒数第二段（第三方 CDN 回退）
+    if not video_id:
+        parts = [p for p in path_clean.split("/") if p]
+        video_id = parts[-2] if len(parts) >= 2 else ""
 
     return app_id, video_id, suffix
 
@@ -160,6 +191,15 @@ async def _handle_direct_download(request: Request) -> Response:
                     _cleanup_failed_download(save_path)
                     return Response(content=json.dumps({"code": 0, "message": f"HTTP {resp.status_code}", "data": None}), status_code=502, media_type="application/json")
 
+                # 防假成功闸门 1：Content-Type 校验。
+                # 真实 CDN 防盗链被拒时可能 302 到提示页/登录页（text/html），
+                # follow_redirects 会跟过去下载 HTML → 保存为 .mp4 → 前端显示成功。
+                ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype and not ctype.startswith("video/") and ctype not in ("application/octet-stream",):
+                    logger.error("[direct-download] 响应类型非视频（%s），拒绝保存: %s", ctype, download_url)
+                    _cleanup_failed_download(save_path)
+                    return Response(content=json.dumps({"code": 0, "message": f"非视频响应: {ctype}", "data": None}), status_code=502, media_type="application/json")
+
                 with open(str(save_path), "wb") as f:
                     total = 0
                     async for chunk in resp.aiter_bytes():
@@ -171,12 +211,41 @@ async def _handle_direct_download(request: Request) -> Response:
             _cleanup_failed_download(save_path)
             return Response(content='{"code":0,"message":"下载内容为空","data":null}', status_code=502, media_type="application/json")
 
+        # 防假成功闸门 2：文件头校验（响应可能不声明 Content-Type，或声明 octet-stream）。
+        # mp4 的 ftyp box 固定位于文件头部（moov/mdat 前）；m3u8 为 #EXTM3U 文本。
+        if not _verify_content_signature(save_path, suffix):
+            logger.error("[direct-download] 内容签名校验失败，删除: %s", save_path)
+            _cleanup_failed_download(save_path)
+            return Response(content='{"code":0,"message":"内容不是有效视频文件","data":null}', status_code=502, media_type="application/json")
+
         logger.info("[direct-download] 完成: %s (%d bytes)", save_path, total)
         return Response(content=json.dumps({"code": 1, "message": "ok", "data": {"save_path": str(save_path)}}), media_type="application/json")
     except Exception as e:
         logger.error("[direct-download] 失败: %s", e)
         _cleanup_failed_download(save_path)
         return Response(content=json.dumps({"code": 0, "message": str(e), "data": None}), status_code=502, media_type="application/json")
+
+
+def _verify_content_signature(save_path: Path, suffix: str) -> bool:
+    """校验下载内容不是 HTML/错误页（防 302→提示页 假成功）
+
+    - .mp4：文件头含 ftyp box（MP4 规范：第 4-8 字节为 'ftyp'）
+    - .m3u8/.m3u：文本以 #EXTM3U 开头
+    - 其他后缀：不校验（保持兼容，避免误伤未知封装格式）
+    """
+    try:
+        ext = suffix.lower()
+        if ext == ".mp4":
+            with open(str(save_path), "rb") as f:
+                head = f.read(12)
+            return len(head) >= 8 and head[4:8] == b"ftyp"
+        if ext in (".m3u8", ".m3u"):
+            with open(str(save_path), "rb") as f:
+                head = f.read(8)
+            return head.startswith(b"#EXTM3U")
+        return True
+    except OSError:
+        return False
 
 
 def _cleanup_failed_download(save_path: Path):

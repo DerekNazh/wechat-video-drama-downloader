@@ -271,12 +271,19 @@ class ResDownloadService:
             logger.warning("[配置] 设置嗅探类型失败: %s", e)
 
     def open_proxy(self) -> bool:
-        """开启系统代理（调 res_download /api/proxy-open，失败回退注册表）"""
+        """开启系统代理（调 res_download /api/proxy-open，失败回退注册表）
+
+        HTTP 非 200 也视为失败（黑盒异常时不应假成功，否则系统代理没开
+        却对外报告已开）。
+        """
         try:
             resp = requests.get(f"{self.service_url}/api/proxy-open", timeout=5)
             resp.close()
-            logger.info("[代理] 系统代理已开启")
-            return True
+            if resp.status_code == 200:
+                logger.info("[代理] 系统代理已开启")
+                return True
+            logger.warning("[代理] 开启系统代理返回 HTTP %d，回退注册表", resp.status_code)
+            return self._set_proxy_registry()
         except Exception as e:
             logger.warning("[代理] API 开启系统代理失败: %s，回退注册表", e)
             return self._set_proxy_registry()
