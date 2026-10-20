@@ -148,17 +148,22 @@ class ResDownloadService:
             )
 
             # 等待 HTTP 就绪
+            ready = False
             for i in range(wait_seconds):
                 time.sleep(1)
                 if self.is_running():
                     logger.info("[OK] res_download 启动成功 (耗时 %d 秒)", i + 1)
+                    ready = True
                     break
-                if i == wait_seconds - 1:
-                    logger.warning("[WARN] res_download 启动超时")
-                    return True
 
-            # 配置注入
-            self._inject_config()
+            if not ready:
+                logger.error("[ERROR] res_download 启动超时（%d 秒），短剧嗅探不可用", wait_seconds)
+                return False
+
+            # 配置注入（内部自带重试+回读校验），失败则明确返回失败
+            if not self._inject_config():
+                logger.error("[ERROR] res_download 配置注入失败，短剧嗅探链路不可用")
+                return False
 
             return True
 
@@ -166,60 +171,89 @@ class ResDownloadService:
             logger.error("[ERROR] 启动失败: %s", e)
             return False
 
-    def _inject_config(self) -> bool:
-        """注入配置：UpstreamProxy、SaveDirectory
+    def ensure_configured(self) -> bool:
+        """确保配置已正确注入（含重试 + 回读校验）
+
+        供外部在开启系统代理前调用：注入未就绪时不应开启代理，
+        否则流量进入 8899 但转发链路（UpstreamProxy→2023）是断的。
+        """
+        return self._inject_config()
+
+    def _inject_config(self, max_retries: int = 3) -> bool:
+        """注入配置：UpstreamProxy、SaveDirectory（带重试 + 回读校验）
 
         逻辑来自 pac 版本 prepar.go 的 ensureUpstreamProxy()
+        重试策略：注入失败或回读校验不一致时重试，最多 max_retries 次。
         """
-        try:
-            upstream = f"http://127.0.0.1:{self.upstream_port}"
-            save_dir = str(settings.short_drama_download_dir)
+        upstream = f"http://127.0.0.1:{self.upstream_port}"
+        save_dir = str(settings.short_drama_download_dir)
 
-            # GET 当前配置
-            resp = requests.get(f"{self.service_url}/api/get-config", timeout=5)
-            if resp.status_code != 200:
-                logger.warning("[配置] 获取 res_download 配置失败: HTTP %d", resp.status_code)
-                return False
+        for attempt in range(1, max_retries + 1):
+            try:
+                # GET 当前配置
+                resp = requests.get(f"{self.service_url}/api/get-config", timeout=5)
+                if resp.status_code != 200:
+                    logger.warning("[配置] 第 %d 次获取 res_download 配置失败: HTTP %d", attempt, resp.status_code)
+                    time.sleep(2)
+                    continue
 
-            result = resp.json()
-            data = result.get("data", {})
-            if not isinstance(data, dict):
-                logger.warning("[配置] res_download 配置 data 字段格式异常")
-                return False
+                result = resp.json()
+                data = result.get("data", {})
+                if not isinstance(data, dict):
+                    logger.warning("[配置] 第 %d 次 res_download 配置 data 字段格式异常", attempt)
+                    time.sleep(2)
+                    continue
 
-            # 嗅探类型每次都要设置（Type 走独立接口 /api/set-type，不在 get-config 里）
-            self._set_type_video()
+                # 嗅探类型每次都要设置（Type 走独立接口 /api/set-type，不在 get-config 里）
+                self._set_type_video()
 
-            # 检查是否已配置
-            if (data.get("UpstreamProxy") == upstream
-                    and data.get("SaveDirectory") == save_dir):
-                logger.info("[配置] res_download 配置已正确，无需修改")
-                return True
+                # 检查是否已配置
+                if (data.get("UpstreamProxy") == upstream
+                        and data.get("SaveDirectory") == save_dir):
+                    logger.info("[配置] res_download 配置已正确，无需修改")
+                    return True
 
-            # 设置目标字段
-            data["UpstreamProxy"] = upstream
-            data["OpenProxy"] = True
-            data["AutoProxy"] = False
-            data["SaveDirectory"] = save_dir
+                # 设置目标字段
+                data["UpstreamProxy"] = upstream
+                data["OpenProxy"] = True
+                data["AutoProxy"] = False
+                data["SaveDirectory"] = save_dir
 
-            # POST 回写
-            config_bytes = json.dumps(data)
-            set_resp = requests.post(
-                f"{self.service_url}/api/set-config",
-                json=data,
-                timeout=5,
-            )
-            if set_resp.status_code != 200:
-                logger.warning("[配置] 设置 res_download 配置失败: HTTP %d", set_resp.status_code)
-                return False
+                # POST 回写
+                set_resp = requests.post(
+                    f"{self.service_url}/api/set-config",
+                    json=data,
+                    timeout=5,
+                )
+                if set_resp.status_code != 200:
+                    logger.warning("[配置] 第 %d 次设置 res_download 配置失败: HTTP %d", attempt, set_resp.status_code)
+                    time.sleep(2)
+                    continue
 
-            logger.info("[配置] res_download 配置注入完成: UpstreamProxy=%s, SaveDirectory=%s", upstream, save_dir)
+                # 回读校验：确认 UpstreamProxy / SaveDirectory / OpenProxy 真正生效
+                verify_resp = requests.get(f"{self.service_url}/api/get-config", timeout=5)
+                if verify_resp.status_code != 200:
+                    logger.warning("[配置] 第 %d 次回读校验失败: HTTP %d", attempt, verify_resp.status_code)
+                    time.sleep(2)
+                    continue
 
-            return True
+                verified = verify_resp.json().get("data", {})
+                if (isinstance(verified, dict)
+                        and verified.get("UpstreamProxy") == upstream
+                        and verified.get("SaveDirectory") == save_dir
+                        and verified.get("OpenProxy") is True):
+                    logger.info("[配置] res_download 配置注入完成并已回读确认: UpstreamProxy=%s, SaveDirectory=%s", upstream, save_dir)
+                    return True
 
-        except Exception as e:
-            logger.warning("[配置] 注入配置失败: %s", e)
-            return False
+                logger.warning("[配置] 第 %d 次注入后回读校验不一致（期望 UpstreamProxy=%s），重试", attempt, upstream)
+                time.sleep(2)
+
+            except Exception as e:
+                logger.warning("[配置] 第 %d 次注入配置失败: %s", attempt, e)
+                time.sleep(2)
+
+        logger.error("[配置] 注入失败（已重试 %d 次），短剧嗅探链路不可用", max_retries)
+        return False
 
     def _set_type_video(self) -> None:
         """设置嗅探类型为仅视频（调 /api/set-type）"""
@@ -237,15 +271,64 @@ class ResDownloadService:
             logger.warning("[配置] 设置嗅探类型失败: %s", e)
 
     def open_proxy(self) -> bool:
-        """开启系统代理（调 res_download /api/proxy-open）"""
+        """开启系统代理（调 res_download /api/proxy-open，失败回退注册表）"""
         try:
             resp = requests.get(f"{self.service_url}/api/proxy-open", timeout=5)
             resp.close()
             logger.info("[代理] 系统代理已开启")
             return True
         except Exception as e:
-            logger.warning("[代理] 开启系统代理失败: %s", e)
+            logger.warning("[代理] API 开启系统代理失败: %s，回退注册表", e)
+            return self._set_proxy_registry()
+
+    def _set_proxy_registry(self) -> bool:
+        """直接修改注册表开启系统代理（指向本机 res_download 端口）"""
+        try:
+            import winreg
+            proxy_server = f"127.0.0.1:{self.port}"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings", 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, proxy_server)
+                winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1)
+            logger.info("[代理] 已通过注册表开启系统代理: %s", proxy_server)
+            return True
+        except Exception as e:
+            logger.error("[代理] 注册表开启系统代理失败: %s", e)
             return False
+
+    def recover_stale_proxy(self) -> dict:
+        """自愈：检测系统代理残留（指向本应用端口但服务已死），自动清理
+
+        场景：应用被强杀/崩溃时优雅退出未执行，注册表 ProxyEnable=1 且
+        ProxyServer 指向 res_download 端口，但进程已不在 → 全网流量走死代理。
+        此时读取注册表修复，避免用户"什么都加载不了"。
+
+        Returns:
+            {"changed": bool, "reason": str}
+        """
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings", 0, winreg.KEY_READ) as key:
+                proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+                proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+        except FileNotFoundError:
+            return {"changed": False, "reason": "系统代理未启用（ProxyEnable 键不存在）"}
+        except Exception as e:
+            logger.warning("[代理] 读取系统代理注册表失败: %s", e)
+            return {"changed": False, "reason": f"读取注册表失败: {e}"}
+
+        if not proxy_enable:
+            return {"changed": False, "reason": "系统代理未启用"}
+
+        if proxy_server != f"127.0.0.1:{self.port}":
+            return {"changed": False, "reason": f"系统代理指向其他代理 {proxy_server}，跳过"}
+
+        # 代理指向本应用端口但服务已死 = 残留
+        if self.is_running():
+            return {"changed": False, "reason": "系统代理指向本应用且服务存活，正常"}
+
+        logger.warning("[代理] 检测到残留系统代理（指向 %s 但服务不在），自动清理", proxy_server)
+        success = self._unset_proxy_registry()
+        return {"changed": success, "reason": "残留系统代理已清理" if success else "残留代理清理失败"}
 
     def unset_proxy(self) -> bool:
         """关闭系统代理：优先调 res_download API，进程不在则直接改注册表"""
@@ -307,7 +390,7 @@ class ResDownloadService:
                     logger.info("[OK] 端口 %d 已释放", self.port)
                     return True
 
-            logger.warning("[停止] 端口 %d 未释放，可能残留连接")
+            logger.warning("[停止] 端口 %d 未释放，可能残留连接", self.port)
             return True
 
         except Exception as e:

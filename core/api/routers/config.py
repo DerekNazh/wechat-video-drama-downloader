@@ -80,6 +80,19 @@ def update_config(request: UpdateConfigRequest):
             return {"code": -1, "msg": "下载目录不能为空"}
         settings._config.wx_download_dir = value.strip()
         _update_env_value("WX_DOWNLOAD_DIR", value.strip())
+        # 同步注入 Go config.yaml + 重启 Go 生效：
+        # 否则 Go 仍按静态 config.yaml 的旧目录落盘，文件下了但用户去新目录找不到
+        try:
+            from core.utils.base_servier import WechatVideoService
+            svc = WechatVideoService()
+            injected = svc._inject_download_dir()
+            if svc.is_running():
+                logger.info("[update_config] 下载目录变更，重启 Go 后端使新目录生效")
+                svc.restart()
+            if not injected:
+                logger.warning("[update_config] 注入 config.yaml 失败，下载目录可能不同步")
+        except Exception as e:
+            logger.error(f"[update_config] 同步 Go 下载目录失败: {e}")
         updated.append(f"下载目录={value.strip()}")
         logger.info(f"[update_config] wx_download_dir={value.strip()}")
 

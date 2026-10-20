@@ -183,7 +183,7 @@ def _check_dependencies():
     # 关键依赖列表
     critical_packages = [
         "fastapi", "uvicorn", "requests", "httpx",
-        "webview", "yaml", "peewee",
+        "webview", "yaml",
     ]
 
     missing = []
@@ -458,17 +458,11 @@ def _setup_logging(config) -> None:
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
 
-    # peewee logger 禁用 propagate
-    peewee_logger = logging.getLogger("peewee")
-    peewee_logger.setLevel(logging.WARNING)
-    peewee_logger.propagate = False
-
     # 第三方库日志级别
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("watchdog").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
 
 
 # ==================== 初始化函数 ====================

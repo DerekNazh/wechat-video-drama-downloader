@@ -17,25 +17,12 @@ python-dotenv==1.2.2
 PyYAML==6.0.3
 pydantic==2.13.1
 
-# 数据处理
-pillow==12.2.0
-opencv-python==4.13.0.92
-numpy==2.4.4
-scikit-learn==1.8.0
-
-# 数据库
-peewee==4.0.5
-
 # 文件处理
 python-multipart==0.0.26
 openpyxl==3.1.5
-
-# AI
-openai==2.32.0
 
 # CLI
 typer[all]==0.25.1
 
 # 开发/打包
 pyinstaller==6.19.0
-playwright==1.58.0

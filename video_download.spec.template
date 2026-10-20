@@ -1,0 +1,60 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec 模板（构建时渲染为 video_download.spec）
+
+占位符 {ROOT} 会被 build.py 替换为项目根目录绝对路径。
+入口为 main.py（含单实例检测），产物为带 GUI 的 Windows 桌面应用。
+"""
+a = Analysis(
+    ['{ROOT}/main.py'],
+    pathex=['{ROOT}'],
+    binaries=[],
+    datas=[],
+    hiddenimports=[
+        # Windows 专属延迟导入
+        'winreg',
+        # GUI 运行时延迟导入
+        'webview',
+        # Web 框架及其扩展
+        'fastapi', 'uvicorn', 'pydantic',
+        'httpx', 'requests', 'websocket',
+        # 配置/日志
+        'dotenv', 'yaml',
+        # 其他延迟导入
+        'multipart', 'openpyxl', 'typer',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='微信号视频短剧下载器',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='微信号视频短剧下载器',
+)

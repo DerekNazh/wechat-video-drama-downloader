@@ -237,8 +237,27 @@ class MonitorService:
         global _monitor_running
         round_num = 0
 
+        # 微信连接自愈：未连接时等待重试（不退出循环），连上自动开始工作。
+        # 监控生命周期跟随程序：程序开着监控就一直运行，无需人为启停。
+        try:
+            from core.utils.weixin_client import WechatVideoAPIClient
+            _wx_client = WechatVideoAPIClient()
+        except Exception:
+            _wx_client = None
+
+        _wx_wait_logged = False
         try:
             while _monitor_running:
+                # 微信连接自检（依赖 Go 在线；Go 不在线时 check 返回 False 同样等待）
+                if _wx_client is None or not _wx_client.check_wechat_connected():
+                    if not _wx_wait_logged:
+                        logger.info("[_monitor_loop] 微信未连接，等待重试（连上后自动开始监控下载，无需手动操作）")
+                        _wx_wait_logged = True
+                    self._wait_or_stop(10)
+                    continue
+                if _wx_wait_logged:
+                    logger.info("[_monitor_loop] 微信已连接，开始自动监控下载")
+                    _wx_wait_logged = False
                 # 检查暂停状态
                 if self._paused:
                     logger.info("[_monitor_loop] 监控已暂停，等待 5 秒后重试...")

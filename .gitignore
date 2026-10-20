@@ -42,3 +42,11 @@ docs/
 # Go binary logs
 weixin_exe/app.log
 weixin_exe/gopeed.db
+
+# SQLite WAL/SHM 运行时文件（随 .db 一并忽略，防残留无主文件入库）
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# 本地配置（含密钥/版本等运行时配置，不入库；模板见 config/.env.example）
+config/.env

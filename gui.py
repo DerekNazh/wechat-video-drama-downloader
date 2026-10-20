@@ -317,6 +317,12 @@ def _wait_for_system_proxy(max_wait: int = 60) -> None:
         logger.warning("[代理] res_download 等待超时，跳过系统代理设置")
         return
 
+    # 开启系统代理前校验配置注入（UpstreamProxy→2023 / SaveDirectory）
+    # 注入未就绪时开代理 = 流量进 8899 但转发链路是断的
+    if not svc.ensure_configured():
+        logger.warning("[代理] res_download 配置注入失败，暂不开启系统代理")
+        return
+
     # 开启系统代理
     success = svc.open_proxy()
     if success:

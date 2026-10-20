@@ -26,8 +26,8 @@ from typing import Dict, List
 try:
     from dotenv import load_dotenv
 except ImportError:
-    logger.info("错误: 需要安装 python-dotenv 库")
-    logger.info("请运行: pip install python-dotenv")
+    print("错误: 需要安装 python-dotenv 库")
+    print("请运行: pip install python-dotenv")
     sys.exit(1)
 
 
@@ -72,6 +72,8 @@ class _EnvConfig:
     res_port: int = 8899              # res_download HTTP 端口
     res_upstream_port: int = 2023     # 上游代理端口（weixin_download 内部代理）
     res_auto_proxy: bool = False      # 启动时自动开启系统代理（默认关闭，需手动在设置中开启）
+    sniff_proxy_timeout: float = 15.0   # 嗅探透传请求超时（秒）
+    sniff_download_timeout: float = 120.0  # direct-download 大文件下载超时（秒）
 
     # 广告开关
     ads_enabled: bool = True          # 广告总开关
@@ -329,8 +331,10 @@ class SettingsManager:
             sys.path.insert(0, core_str)
 
     def ensure_dirs(self):
-        """确保关键目录存在"""
+        """确保关键目录存在（干净 clone / 打包环境下 data 目录可能缺失，
+        而 sqlite3.connect 不会自动创建父目录，缺失会导致数据库初始化崩溃）"""
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
     def _load_configs(self):
         """从 author.json 加载 API 配置和提示词"""
@@ -465,6 +469,25 @@ class SettingsManager:
 
     # ========== 配置加载 ==========
 
+    def _resolve_project_version(self) -> str:
+        """解析项目版本号：优先读应用根目录 VERSION 文件（单一事实源）
+
+        读取顺序：
+        1. app_root/VERSION 文件（存在且非空）
+        2. 环境变量 PROJECT_VERSION（.env）
+        3. 兜底 "1.0.0"
+        """
+        version_file = Path(self.app_root) / "VERSION"
+        try:
+            if version_file.exists():
+                ver = version_file.read_text(encoding="utf-8").strip()
+                if ver:
+                    print(f"[配置] 版本号来自 VERSION 文件: {ver}")
+                    return ver
+        except Exception as e:
+            print(f"[配置] 读取 VERSION 文件失败: {e}，回退 .env")
+        return os.getenv("PROJECT_VERSION", "1.0.0")
+
     def _load_env(self, env_path: str) -> _EnvConfig:
         """加载 .env 配置"""
         import logging
@@ -483,8 +506,9 @@ class SettingsManager:
             print(f"[警告] 环境变量文件不存在: {env_path}，使用默认配置")
 
         config_data = _EnvConfig(
-            # 项目信息
-            project_version=os.getenv("PROJECT_VERSION", "1.0.0"),
+            # 项目信息：版本号单一事实源 = 应用根目录 VERSION 文件，
+            # 其次 .env PROJECT_VERSION，兜底 1.0.0
+            project_version=self._resolve_project_version(),
 
             # 日志配置
             log_level=os.getenv("LOG_LEVEL", "INFO"),
@@ -500,6 +524,8 @@ class SettingsManager:
             res_port=int(os.getenv("RES_PORT", "8899")),
             res_upstream_port=int(os.getenv("RES_UPSTREAM_PORT", "2023")),
             res_auto_proxy=os.getenv("RES_AUTO_PROXY", "false").lower() == "true",
+            sniff_proxy_timeout=float(os.getenv("SNIFF_PROXY_TIMEOUT", "15.0")),
+            sniff_download_timeout=float(os.getenv("SNIFF_DOWNLOAD_TIMEOUT", "120.0")),
 
             ads_enabled=os.getenv("ADS_ENABLED", "true").lower() == "true",
             pywebview_debug=os.getenv("PYWEBVIEW_DEBUG", "false").lower() == "true",
@@ -568,6 +594,12 @@ class SettingsManager:
 
     @property
     def res_auto_proxy(self): return self._config.res_auto_proxy
+
+    @property
+    def sniff_proxy_timeout(self): return self._config.sniff_proxy_timeout
+
+    @property
+    def sniff_download_timeout(self): return self._config.sniff_download_timeout
 
     @max_concurrent.setter
     def max_concurrent(self, value: int):

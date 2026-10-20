@@ -32,135 +32,31 @@ async function fetchWithErrorHandling(url, options = {}, actionName = '操作') 
 }
 
 async function toggleService(event) {
+  // 自动模式（生命周期跟随程序）：服务由程序启动/关闭自动管理，无需人工启停。
   const btn = event?.target?.closest('button') || event?.target;
   if (!btn) return;
 
-  const wasOnline = _goOnline;
-
-  // 停止服务时，检查是否有活跃下载任务
-  if (wasOnline) {
-    var activeCount = _activeTasks.filter(function(t) {
-      return t.status !== 'done' && t.status !== 'completed' && t.status !== 'error' && t.status !== 'failed';
-    }).length;
-    if (activeCount > 0) {
-      var confirmed = await showStopServiceConfirm(activeCount);
-      if (!confirmed) return;
-    }
-  }
-
-  const url = wasOnline ? '/api/service/stop' : '/api/service/start';
-
-  btn.disabled = true;
-  btn.textContent = wasOnline ? '停止中...' : '启动中...';
-
-  try {
-    const res = await fetch(url, { method: 'POST' });
-    const data = await res.json();
-    if (data.code === 0) {
-      // API 返回成功 = 操作已完成，立刻更新 UI
-      _goOnline = !wasOnline;
-      State.service.setGoOnline(_goOnline);
-
-      // 立刻调一次 status 获取真实微信连接状态
-      fetch("/api/service/status")
-        .then(r => r.json())
-        .then(s => {
-          if (s.code === 0) {
-            updateStatusFromPoll({
-              service_online: s.data.service_online,
-              wechat_connected: s.data.wechat_connected,
-              monitor_running: _monitorRunning,
-              today_count: s.data.today_count || 0,
-              today_downloaded: s.data.today_downloaded || 0,
-              total_videos: s.data.total_videos || 0,
-            });
-          }
-        })
-        .catch(() => {});
-
-      showToast({
-        type: 'success',
-        title: wasOnline ? '服务已停止' : '服务已启动',
-        message: data.msg || ''
-      });
-    } else {
-      showToast({ type: 'error', title: '操作失败', message: data.msg || '' });
-    }
-  } catch (e) {
-    showToast({ type: 'error', title: '操作失败', message: e.message });
-  }
-
-  btn.disabled = false;
-  btn.textContent = _goOnline ? '■ 停止' : '▶ 启动';
+  var svc = typeof State !== 'undefined' && State.service ? State.service : null;
+  var goOnline = svc && typeof svc.isGoOnline === 'function' ? svc.isGoOnline() : _goOnline;
+  showToast({
+    type: 'info',
+    title: goOnline ? '服务运行中' : '服务自动启动中',
+    message: '服务跟随程序自动运行，微信连上即自动下载，无需手动操作'
+  });
+  return;
 }
 
 async function toggleOneClickMonitor() {
+  // 自动模式（生命周期跟随程序）：监控由程序启动/关闭自动管理，无需人工启停。
   var svc = typeof State !== 'undefined' && State.service ? State.service : null;
-  var goOnline = svc && typeof svc.isGoOnline === 'function' ? svc.isGoOnline() : _goOnline;
-  var wechatOk = svc && typeof svc.isWechatConnected === 'function' ? svc.isWechatConnected() : false;
-
-  if (!goOnline) {
-    showToast({ type: 'warning', title: '服务未启动', message: '微信视频号后端服务未启动，请先启动服务' });
-    return;
+  var monitorRunning = svc && typeof svc.isMonitorRunning === 'function'
+    ? svc.isMonitorRunning() : _monitorRunning;
+  if (monitorRunning) {
+    showToast({ type: 'info', title: '自动监控中', message: '监控跟随程序自动运行，微信连上即自动下载，无需手动操作' });
+  } else {
+    showToast({ type: 'info', title: '等待自动监控', message: '监控即将自动启动（等待微信连接），无需手动操作' });
   }
-  if (!wechatOk) {
-    showToast({ type: 'warning', title: '微信未连接', message: '微信客户端未连接，请先打开微信并登录' });
-    return;
-  }
-
-  try {
-    if (_monitorRunning) {
-      const res = await apiFetch('/api/monitor/stop', { method: 'POST' });
-      const data = await res.json();
-      if (data.code === 0) {
-        _monitorRunning = false;
-        State.service.setMonitorRunning(false);
-        // 立刻调一次 status 获取真实微信状态
-        fetch("/api/service/status")
-          .then(r => r.json())
-          .then(s => {
-            if (s.code === 0) {
-              updateStatusFromPoll({
-                service_online: s.data.service_online,
-                wechat_connected: s.data.wechat_connected,
-                monitor_running: false,
-                today_count: s.data.today_count || 0,
-                today_downloaded: s.data.today_downloaded || 0,
-                total_videos: s.data.total_videos || 0,
-              });
-            }
-          })
-          .catch(() => {});
-        showToast({ type: 'success', title: '监控已停止' });
-      }
-    } else {
-      const res = await apiFetch('/api/monitor/start', { method: 'POST' });
-      const data = await res.json();
-      if (data.code === 0) {
-        _monitorRunning = true;
-        State.service.setMonitorRunning(true);
-        // 立刻调一次 status 获取真实微信状态
-        fetch("/api/service/status")
-          .then(r => r.json())
-          .then(s => {
-            if (s.code === 0) {
-              updateStatusFromPoll({
-                service_online: s.data.service_online,
-                wechat_connected: s.data.wechat_connected,
-                monitor_running: true,
-                today_count: s.data.today_count || 0,
-                today_downloaded: s.data.today_downloaded || 0,
-                total_videos: s.data.total_videos || 0,
-              });
-            }
-          })
-          .catch(() => {});
-        showToast({ type: 'success', title: '监控已启动' });
-      }
-    }
-  } catch (e) {
-    showToast({ type: 'error', title: '操作失败', message: e.message });
-  }
+  return;
 }
 
 function showStopServiceConfirm(activeCount) {

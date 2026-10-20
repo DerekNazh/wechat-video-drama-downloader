@@ -23,8 +23,9 @@ logger = logging.getLogger("api_sniff_proxy")
 router = APIRouter(tags=["sniff_proxy"])
 
 RES_API_BASE = settings.res_api_url
-HTTP_TIMEOUT = 15.0
-DOWNLOAD_TIMEOUT = 120.0
+# 超时参数化：可在 .env 中调整（SNIFF_PROXY_TIMEOUT / SNIFF_DOWNLOAD_TIMEOUT）
+HTTP_TIMEOUT = settings.sniff_proxy_timeout
+DOWNLOAD_TIMEOUT = settings.sniff_download_timeout
 
 # 直接透传的 API
 DIRECT_PROXY_PATHS = frozenset({
@@ -71,7 +72,15 @@ def _parse_download_url(download_url: str) -> tuple:
 
 
 async def _handle_direct_download(request: Request) -> Response:
-    """Python 自行下载，文件名 = 短剧ID_序号_视频ID.mp4"""
+    """Python 自行下载，文件名 = 短剧ID_序号_视频ID.mp4
+
+    功能性保证（针对"下载不了但前端假装成功"问题）：
+    1. 失败一律返回 HTTP 非 200 → 前端 await 抛异常 → 显示 error，杜绝假成功
+    2. 下载失败/中断后清理残留文件，避免下次 exists() 跳过损坏文件
+    3. 已存在但 size==0 视为损坏文件 → 删除重下
+    4. 流式写入，避免大文件一次性读入内存导致 OOM
+    5. 携带防盗链 headers（Referer 取目标 URL origin + 浏览器 UA）
+    """
     body = await request.body()
     try:
         data = json.loads(body)
@@ -92,36 +101,92 @@ async def _handle_direct_download(request: Request) -> Response:
     save_dir = str(settings.short_drama_download_dir)
     app_dir = Path(save_dir) / app_id
 
-    # 序号 = 该短剧目录已有文件数 + 1
-    seq = sum(1 for f in app_dir.iterdir() if f.is_file()) + 1 if app_dir.is_dir() else 1
+    # 已存在校验（先于序号生成）：
+    # 文件名 = {app_id}_{seq}_{video_id}{suffix}，同一短剧目录内 video_id 唯一，
+    # 因此按 "_video_id{suffix}" 匹配即可命中已下载文件。
+    # 若用"文件数+1"序号直接生成，则重复点击永远生成新序号文件，永不命中旧文件（重复下载）。
+    existing_valid = []
+    existing_zero = []
+    if app_dir.is_dir():
+        for f in app_dir.iterdir():
+            if not f.is_file():
+                continue
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+            (existing_valid if size > 0 else existing_zero).append(f)
 
+    video_suffix = f"_{video_id}{suffix}"
+
+    # 1) 有效文件命中 → 跳过（不重复下载）
+    matched = [f for f in existing_valid if f.name.endswith(video_suffix)]
+    if matched:
+        logger.info("[direct-download] 文件已存在: %s", matched[0])
+        return Response(content=json.dumps({"code": 1, "message": "ok", "data": {"save_path": str(matched[0])}}), media_type="application/json")
+
+    # 2) 0 字节同名残留 → 删除重下（避免永久假成功）
+    zero_matched = [f for f in existing_zero if f.name.endswith(video_suffix)]
+    if zero_matched:
+        logger.warning("[direct-download] 检测到 0 字节损坏残留，删除重下: %s", zero_matched[0])
+        try:
+            zero_matched[0].unlink()
+        except OSError as e:
+            logger.error("[direct-download] 删除损坏残留失败: %s", e)
+
+    # 3) 序号 = 有效文件数 + 1（0 字节文件不计入）
+    seq = len(existing_valid) + 1
     filename = f"{app_id}_{seq}_{video_id}{suffix}"
     save_path = app_dir / filename
 
-    # 已存在则跳过
-    if save_path.exists():
-        logger.info("[direct-download] 文件已存在: %s", save_path)
-        return Response(content=json.dumps({"code": 1, "message": "ok", "data": {"save_path": str(save_path)}}), media_type="application/json")
+    # 防盗链 headers：Referer 取目标 URL origin，UA 透传浏览器
+    parsed = urlparse(download_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else None
+    dl_headers = {
+        "User-Agent": request.headers.get("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
+    }
+    if origin:
+        dl_headers["Referer"] = origin
 
-    # 下载
+    # 下载（流式写入，防大文件内存 OOM）
     os.makedirs(str(app_dir), exist_ok=True)
     logger.info("[direct-download] %s → %s", download_url, save_path)
 
     try:
         async with httpx.AsyncClient(timeout=DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-            resp = await client.get(download_url)
-        if resp.status_code != 200:
-            logger.error("[direct-download] HTTP %d", resp.status_code)
-            return Response(content=json.dumps({"code": 0, "message": f"HTTP {resp.status_code}", "data": None}), media_type="application/json")
+            async with client.stream("GET", download_url, headers=dl_headers) as resp:
+                if resp.status_code != 200:
+                    logger.error("[direct-download] HTTP %d", resp.status_code)
+                    _cleanup_failed_download(save_path)
+                    return Response(content=json.dumps({"code": 0, "message": f"HTTP {resp.status_code}", "data": None}), status_code=502, media_type="application/json")
 
-        with open(str(save_path), "wb") as f:
-            f.write(resp.content)
+                with open(str(save_path), "wb") as f:
+                    total = 0
+                    async for chunk in resp.aiter_bytes():
+                        f.write(chunk)
+                        total += len(chunk)
 
-        logger.info("[direct-download] 完成: %s (%d bytes)", save_path, len(resp.content))
+        if total == 0:
+            logger.error("[direct-download] 下载内容为空，视为失败")
+            _cleanup_failed_download(save_path)
+            return Response(content='{"code":0,"message":"下载内容为空","data":null}', status_code=502, media_type="application/json")
+
+        logger.info("[direct-download] 完成: %s (%d bytes)", save_path, total)
         return Response(content=json.dumps({"code": 1, "message": "ok", "data": {"save_path": str(save_path)}}), media_type="application/json")
     except Exception as e:
         logger.error("[direct-download] 失败: %s", e)
-        return Response(content=json.dumps({"code": 0, "message": str(e), "data": None}), media_type="application/json")
+        _cleanup_failed_download(save_path)
+        return Response(content=json.dumps({"code": 0, "message": str(e), "data": None}), status_code=502, media_type="application/json")
+
+
+def _cleanup_failed_download(save_path: Path):
+    """下载失败后清理残留文件（部分/空文件会让下次 exists() 误判为已下载）"""
+    try:
+        if save_path.exists():
+            save_path.unlink()
+            logger.info("[direct-download] 已清理失败残留: %s", save_path)
+    except OSError as e:
+        logger.warning("[direct-download] 清理失败残留异常: %s", e)
 
 
 async def _proxy_request(request: Request) -> Response:

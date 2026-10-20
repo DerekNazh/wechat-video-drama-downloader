@@ -111,7 +111,7 @@ class WechatVideoAPIClient:
             data = resp.json()
             return data.get("code") == 0
         except Exception as e:
-            logger.error(f"[clear_all_tasks] 异常: {e}")
+            logger.error(f"[cancel_task] 异常: {e}")
             return False
 
     def download_video(self, video_id: str, url: str, title: str,

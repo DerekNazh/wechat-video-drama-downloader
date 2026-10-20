@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from core.api.routers import video, search, inputer, monitor, player, task, base_service, sse, leader, config, author, sniff_proxy
+from core.api.routers import video, search, inputer, monitor, player, task, base_service, sse, leader, config, author, sniff_proxy, link_status
 
 logger = logging.getLogger("app")
 
@@ -82,15 +82,29 @@ def _startup_sequence():
     except Exception as e:
         logger.warning(f"清理过期记录失败: {e}")
 
+    # 2.2 代理残留自愈：检测系统代理指向本应用端口但服务已死 → 自动清理
+    # （防上次强杀/崩溃留下的死代理导致"全网流量走死代理"）
+    try:
+        from core.utils.res_download_service import ResDownloadService
+        _res_svc = ResDownloadService()
+        stale = _res_svc.recover_stale_proxy()
+        if stale["changed"]:
+            logger.info("[启动] %s", stale["reason"])
+    except Exception as e:
+        logger.warning(f"[启动] 代理残留自愈检查异常: {e}")
+
     # 3. 启动 res_download（短剧嗅探服务，必须先于 weixin_download）
     _auto_start_res_download()
 
     # 4. 启动 weixin_download（视频号后端）
     _auto_start_go_backend()
 
+    # 4.1 自动启动视频监控（生命周期跟随程序：程序开着监控就一直运行）
+    # 不依赖微信连接状态——monitor 循环内置微信自愈（未连时等待重试，连上自动工作）
+    _auto_start_monitor()
+
     # 4. 恢复待处理任务（断点续传：重新创建 Go 下载任务）
-    # 使用 resume_pending_tasks 而非 resume_all_running_tasks，
-    # 因为停止服务时任务已保存为 pending，冷启动需要恢复 pending 状态的任务
+    # 使用 resume_pending_tasks 恢复停止服务时保存为 pending 的任务
     # 注意：必须在 cleanup_stale 之前执行，否则任务会被清理掉
     from core.service.task import resume_pending_tasks
     resume_result = resume_pending_tasks()
@@ -238,6 +252,27 @@ def _auto_start_go_backend():
         logger.warning(f"[启动] 自动启动微信视频号后端异常: {e}")
 
 
+def _auto_start_monitor():
+    """自动启动视频监控（生命周期跟随程序：程序开着就一直运行）
+
+    不检查微信连接状态——monitor 循环内置微信自愈：
+    微信未连接时循环等待重试（不退出），连上后自动开始同步与下载。
+    前端无需（也不应）手动启停监控。
+    """
+    try:
+        from core.monitor.monitor import MonitorService
+        from core.utils.database import db
+
+        svc = MonitorService(db)
+        result = svc.start_monitor()
+        if result.get("code") == 0:
+            logger.info("[启动] 视频监控已自动启动（生命周期跟随程序，微信连上即自动下载）")
+        else:
+            logger.warning("[启动] 视频监控自动启动未成功: %s", result.get("msg", result))
+    except Exception as e:
+        logger.warning(f"[启动] 视频监控自动启动异常: {e}")
+
+
 def _shutdown_sequence():
     """关闭序列（反向：先关 weixin_download，再关 res_download）"""
     global _orphan_cleaner
@@ -335,6 +370,7 @@ app.include_router(sse.router)
 app.include_router(leader.router)
 app.include_router(config.router)
 app.include_router(sniff_proxy.router)
+app.include_router(link_status.router)
 
 # 静态文件目录（使用 settings.app_root 兼容打包和开发模式）
 from config.settings import settings

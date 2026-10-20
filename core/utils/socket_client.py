@@ -131,24 +131,20 @@ class DownloadProgressListener:
                         opts = (meta.get("opts") or {}) if isinstance(meta, dict) else {}
                         dir_path = opts.get("path", "")
                         file_name = opts.get("name", "")
-                        if dir_path and file_name:
-                            from pathlib import Path
-                            full_path = str(Path(dir_path) / file_name)
-                            import os
-                            if os.path.isfile(full_path):
-                                db.update_video_downloaded(video_id, full_path)
-                                logger.info(f"[WS] 标记视频已下载: video_id={video_id}, path={full_path}")
-                                author = db.get_author(video_record.author_id) if video_record.author_id else None
-                                if author:
-                                    from core.utils.event_bus import emit_task_completed
-                                    emit_task_completed({"video_id": video_id, "author_id": video_record.author_id})
-                                    logger.info(f"[WS] 触发task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
-                                else:
-                                    logger.warning(f"[WS] 视频作者未找到，跳过task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
+                        from core.service.task import find_downloaded_file
+                        full_path = find_downloaded_file(dir_path or "", file_name or "", video_id)
+                        if full_path:
+                            db.update_video_downloaded(video_id, full_path)
+                            logger.info(f"[WS] 标记视频已下载: video_id={video_id}, path={full_path}")
+                            author = db.get_author(video_record.author_id) if video_record.author_id else None
+                            if author:
+                                from core.utils.event_bus import emit_task_completed
+                                emit_task_completed({"video_id": video_id, "author_id": video_record.author_id})
+                                logger.info(f"[WS] 触发task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
                             else:
-                                logger.warning(f"[WS] 文件不存在，跳过标记已下载: video_id={video_id}, expected_path={full_path}")
+                                logger.warning(f"[WS] 视频作者未找到，跳过task_completed事件: video_id={video_id}, author_id={video_record.author_id}")
                         else:
-                            logger.warning(f"[WS] 缺少path/name，跳过标记已下载: video_id={video_id}, dir_path={dir_path}, file_name={file_name}")
+                            logger.warning(f"[WS] 磁盘无匹配文件，跳过标记已下载: video_id={video_id}, dir_path={dir_path}, file_name={file_name}")
                     elif video_record and video_record.is_downloaded:
                         logger.debug(f"[WS] 视频已标记已下载，跳过: video_id={video_id}")
                     else:

@@ -24,12 +24,15 @@ logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).parent.resolve()
 SPEC_FILE = ROOT / "video_download.spec"
+SPEC_TEMPLATE = ROOT / "video_download.spec.template"
 DIST_DIR = ROOT / "dist" / "微信号视频短剧下载器"
 ENV_FILE = ROOT / "config" / ".env"
+VERSION_FILE = ROOT / "VERSION"
 PRODUCT_NAME = "微信号视频短剧下载器"
 
 # 打包后需要复制到根目录的文件/目录
 BUNDLE_FILES = {
+    ROOT / "VERSION": DIST_DIR / "VERSION",
     ROOT / "config" / ".env": DIST_DIR / ".env",
     ROOT / "weixin_exe" / "config.yaml": DIST_DIR / "lib" / "config.yaml",
     ROOT / "weixin_exe" / "wx_video_download.exe": DIST_DIR / "lib" / "wx_video_download.exe",
@@ -45,24 +48,30 @@ WEBVIEW2_BOOTSTRAPPER_FILE = ROOT / "lib" / "MicrosoftEdgeWebview2Setup.exe"
 
 
 def _read_version() -> str:
-    """从 .env 读取 PROJECT_VERSION"""
-    if not ENV_FILE.exists():
-        return "0.0.0"
-    content = ENV_FILE.read_text(encoding="utf-8")
-    m = re.search(r"^PROJECT_VERSION=(.+)$", content, re.MULTILINE)
-    return m.group(1).strip() if m else "0.0.0"
+    """读取版本号：单一事实源 = VERSION 文件（不存在则读 .env 兼容旧配置）"""
+    if VERSION_FILE.exists():
+        ver = VERSION_FILE.read_text(encoding="utf-8").strip()
+        if ver:
+            return ver
+    if ENV_FILE.exists():
+        content = ENV_FILE.read_text(encoding="utf-8")
+        m = re.search(r"^PROJECT_VERSION=(.+)$", content, re.MULTILINE)
+        return m.group(1).strip() if m else "0.0.0"
+    return "0.0.0"
 
 
 def _write_version(version: str):
-    """将 PROJECT_VERSION 写回 .env"""
-    content = ENV_FILE.read_text(encoding="utf-8")
-    content = re.sub(
-        r"^PROJECT_VERSION=.*$",
-        f"PROJECT_VERSION={version}",
-        content,
-        flags=re.MULTILINE,
-    )
-    ENV_FILE.write_text(content, encoding="utf-8")
+    """将版本号写入 VERSION 文件（单一事实源），并同步 .env 的 PROJECT_VERSION（兼容）"""
+    VERSION_FILE.write_text(version + "\n", encoding="utf-8")
+    if ENV_FILE.exists():
+        content = ENV_FILE.read_text(encoding="utf-8")
+        content = re.sub(
+            r"^PROJECT_VERSION=.*$",
+            f"PROJECT_VERSION={version}",
+            content,
+            flags=re.MULTILINE,
+        )
+        ENV_FILE.write_text(content, encoding="utf-8")
     logger.info(f"版本已更新: {version}")
 
 
@@ -93,6 +102,21 @@ def exec_cmd(cmd: list[str]) -> None:
     result = subprocess.run(cmd, cwd=str(ROOT))
     if result.returncode != 0:
         sys.exit(1)
+
+
+def _ensure_spec():
+    """确保 video_download.spec 存在（由入库的模板渲染生成）
+
+    修复历史问题：spec 文件未入库导致干净 clone 无法打包。
+    模板路径占位符 {ROOT} 替换为项目根目录，生成物不提交（.gitignore 已排除 *.spec）。
+    """
+    if not SPEC_TEMPLATE.exists():
+        print(f"[ERROR] Spec 模板不存在: {SPEC_TEMPLATE}")
+        sys.exit(1)
+    content = SPEC_TEMPLATE.read_text(encoding="utf-8")
+    content = content.replace("{ROOT}", str(ROOT).replace("\\", "/"))
+    SPEC_FILE.write_text(content, encoding="utf-8")
+    print(f"[构建] Spec 已由模板生成: {SPEC_FILE.name}")
 
 
 def clean() -> None:
@@ -196,8 +220,8 @@ def build(bump_target: str | None = None) -> None:
         sys.exit(1)
 
     if not SPEC_FILE.exists():
-        print(f"[ERROR] Spec 文件不存在: {SPEC_FILE}")
-        sys.exit(1)
+        # 干净 clone 场景：由入库模板自动生成 spec，保证打包链路可复现
+        _ensure_spec()
 
     wx_exe_src = ROOT / "weixin_exe" / "wx_video_download.exe"
     if not wx_exe_src.exists():
