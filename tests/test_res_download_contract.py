@@ -163,11 +163,9 @@ class TestResProxyManagement:
         monkeypatch.setattr(winreg, "OpenKey", fake_open)
         monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
         monkeypatch.setattr(winreg, "SetValueEx", lambda key, name, *rest: None)
-        # 服务已死：app-info 不可达
-        import requests
-        monkeypatch.setattr("requests.get",
-                            lambda url, timeout=2: (_raise_conn()))
+        # 服务已死：端口未监听（新语义按端口存活判定，比 HTTP 探测更普适）
         svc = ResDownloadService()
+        svc._port_listening = lambda port: False
         result = svc.recover_stale_proxy()
         assert result["changed"] is True
 
@@ -195,16 +193,10 @@ class TestResProxyManagement:
 
         monkeypatch.setattr(winreg, "OpenKey", fake_open)
         monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
-
-        class FakeResp:
-            status_code = 200
-
-            def json(self):
-                return {}
-
-        import requests
-        monkeypatch.setattr("requests.get", lambda url, timeout=2: FakeResp())
+        monkeypatch.setattr(winreg, "SetValueEx", lambda key, name, *rest: None)
+        # 服务存活：端口监听中 → 保留（新语义按端口存活判定）
         svc = ResDownloadService()
+        svc._port_listening = lambda port: True
         result = svc.recover_stale_proxy()
         assert result["changed"] is False
         assert "存活" in result["reason"]
@@ -290,6 +282,98 @@ class TestResProxyManagement:
         assert svc.is_running() is True
         monkeypatch.setattr("requests.get", lambda url, timeout=2: (_raise_conn()))
         assert svc.is_running() is False
+
+    def test_recover_stale_proxy_cleans_go_2023_dead(self, monkeypatch):
+        """Go 黑盒自写系统代理 127.0.0.1:2023 但 Go 已死 → 清理残留
+
+        Go 黑盒会把系统代理写成 2023（MITM 工具常态）；它被杀后同样
+        残留死代理导致用户打不开网站——recover 必须能识别并清理。
+        """
+        import winreg
+        from core.utils.res_download_service import ResDownloadService
+
+        class FakeKey:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_open(*a, **k):
+            return FakeKey()
+
+        def fake_query(key, name):
+            if name == "ProxyEnable":
+                return (1, 1)
+            if name == "ProxyServer":
+                return ("127.0.0.1:2023", 1)
+            raise KeyError(name)
+
+        monkeypatch.setattr(winreg, "OpenKey", fake_open)
+        monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+        monkeypatch.setattr(winreg, "SetValueEx", lambda key, name, *rest: None)
+        svc = ResDownloadService()
+        svc._port_listening = lambda port: False  # Go 已死 → 2023 未监听
+        result = svc.recover_stale_proxy()
+        assert result["changed"] is True
+
+    def test_recover_stale_proxy_keeps_go_2023_alive(self, monkeypatch):
+        """系统代理=2023 且 Go 存活 → 保留（Go 需要它解密，不误清）"""
+        import winreg
+        from core.utils.res_download_service import ResDownloadService
+
+        class FakeKey:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_open(*a, **k):
+            return FakeKey()
+
+        def fake_query(key, name):
+            if name == "ProxyEnable":
+                return (1, 1)
+            if name == "ProxyServer":
+                return ("127.0.0.1:2023", 1)
+            raise KeyError(name)
+
+        monkeypatch.setattr(winreg, "OpenKey", fake_open)
+        monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+        svc = ResDownloadService()
+        svc._port_listening = lambda port: True  # Go 活着
+        result = svc.recover_stale_proxy()
+        assert result["changed"] is False
+        assert "存活" in result["reason"]
+
+    def test_unset_proxy_api_fake_success_still_registry(self, monkeypatch):
+        """关闭代理：API 返回 200 假成功 → 仍走注册表兜底（防黑盒假成功）
+
+        黑盒 /api/proxy-unset 可能返回 200 但实际没改注册表——
+        若不做注册表复核，用户会残留系统代理打不开网站。
+        """
+        import requests
+        from core.utils.res_download_service import ResDownloadService
+
+        class FakeResp:
+            status_code = 200
+
+            def close(self):
+                return None
+
+        registry_called = []
+
+        def fake_unset_registry():
+            registry_called.append(True)
+            return True
+
+        svc = ResDownloadService()
+        svc.is_process_running = lambda: True
+        monkeypatch.setattr(requests, "get", lambda url, timeout=5: FakeResp())
+        svc._unset_proxy_registry = fake_unset_registry
+        assert svc.unset_proxy() is True
+        assert registry_called, "API 假成功也必须执行注册表兜底"
 
 
 def _raise_conn():

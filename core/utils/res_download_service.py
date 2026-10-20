@@ -72,6 +72,14 @@ class ResDownloadService:
         except (ConnectionRefusedError, OSError):
             return True
 
+    def _port_listening(self, port: int) -> bool:
+        """端口是否在监听（True=有服务存活，False=死端口）"""
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except (ConnectionRefusedError, OSError):
+            return False
+
     def kill_port(self) -> bool:
         """强制杀掉占用指定端口的进程（Windows netstat + taskkill）
 
@@ -326,29 +334,40 @@ class ResDownloadService:
         if not proxy_enable:
             return {"changed": False, "reason": "系统代理未启用"}
 
-        if proxy_server != f"127.0.0.1:{self.port}":
+        # 只处理本产品端口：res_download(8899) / Go MITM 上游(2023)
+        # （Go 黑盒可能自写 2023 到系统代理——它被杀死后也是残留，必须能清）
+        own_ports = {self.port, self.upstream_port}
+        try:
+            port = int(proxy_server.rsplit(":", 1)[-1])
+        except (ValueError, IndexError):
+            return {"changed": False, "reason": f"系统代理指向无法解析 {proxy_server}，跳过"}
+        if port not in own_ports:
             return {"changed": False, "reason": f"系统代理指向其他代理 {proxy_server}，跳过"}
 
-        # 代理指向本应用端口但服务已死 = 残留
-        if self.is_running():
-            return {"changed": False, "reason": "系统代理指向本应用且服务存活，正常"}
+        # 端口未监听 = 对应服务已死 = 残留（比 is_running 更普适，2023 无 HTTP API 可探测）
+        if self._port_listening(port):
+            return {"changed": False, "reason": f"系统代理指向本产品端口 {port} 且服务存活，正常"}
 
-        logger.warning("[代理] 检测到残留系统代理（指向 %s 但服务不在），自动清理", proxy_server)
+        logger.warning("[代理] 检测到残留系统代理（指向 %s 但端口 %d 未监听），自动清理", proxy_server, port)
         success = self._unset_proxy_registry()
         return {"changed": success, "reason": "残留系统代理已清理" if success else "残留代理清理失败"}
 
     def unset_proxy(self) -> bool:
-        """关闭系统代理：优先调 res_download API，进程不在则直接改注册表"""
+        """关闭系统代理：调 API + 注册表复核兜底
+
+        API 分支仅作"通知黑盒"：黑盒 /api/proxy-unset 返回 200 但实际没改
+        注册表的"假成功"会让用户残留系统代理、打不开网站（2026-10-21 修复）。
+        因此无论 API 结果如何，注册表层必须确认关闭（_unset_proxy_registry 幂等）。
+        """
         if self.is_process_running():
             try:
                 resp = requests.get(f"{self.service_url}/api/proxy-unset", timeout=5)
                 resp.close()
-                logger.info("[代理] 系统代理已关闭（API）")
-                return True
+                logger.info("[代理] 已请求 API 关闭系统代理（HTTP %s），注册表复核兜底", resp.status_code)
             except Exception as e:
                 logger.warning("[代理] API 关闭失败，回退注册表: %s", e)
 
-        # 进程不在或 API 失败，直接改注册表
+        # 进程不在 / API 成功与否，一律注册表兜底
         return self._unset_proxy_registry()
 
     def _unset_proxy_registry(self) -> bool:
