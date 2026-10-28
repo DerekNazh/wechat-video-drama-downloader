@@ -47,6 +47,10 @@ def _startup_sequence():
     """启动序列（按依赖顺序）"""
     import time
 
+    # 0. 环境基线（最先记录，用于定位「本机能用、客户不能用」类环境差异故障）
+    from core.utils.env_probe import log_environment_baseline
+    log_environment_baseline()
+
     # 1. 创建事件总线（最先）
     global _event_bus
     from core.utils.event_bus import get_event_bus, GO_DISCONNECTED, GO_CONNECTED

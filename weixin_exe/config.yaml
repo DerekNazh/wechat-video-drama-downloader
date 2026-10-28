@@ -7,7 +7,7 @@ inject:
 download:
   defaultHighest: false
   filenameTemplate: '{{created_at}}_{{title}}_{{spec}}'
-  dir: ../下载/作者资源
+  dir: D:/setup_temp/剪辑合成拆散/新_二合一总下载器/下载/作者资源
   pauseWhenDownload: false
   playDoneAudio: true
   frontend: false

@@ -12,6 +12,11 @@ from core.utils.socket_client import DownloadProgressListener
 
 logger = logging.getLogger("weixin_monitor")
 
+# 连通性探测的上一次结果。require_wechat 依赖会在每个受保护请求上执行探测，
+# 仅在状态发生变化时写日志，避免正常运行时刷屏。
+_last_service_state = {"code": None, "available": None}
+_last_wechat_state = {"code": None}
+
 
 def build_video_filename(title: str, create_time: Optional[str], spec: str, video_id: str = "") -> str:
     """构造视频文件名
@@ -72,9 +77,37 @@ class WechatVideoAPIClient:
                 timeout=self.timeout
             )
             data = resp.json()
-            return data.get("code") == 0
-        except Exception:
+        except (requests.RequestException, ValueError) as e:
+            logger.warning(
+                "[check_service] %s 不可达: %s: %s",
+                self.base_url, type(e).__name__, e
+            )
             return False
+
+        code = data.get("code")
+        available = data.get("data", {}).get("channels", {}).get("available")
+
+        # 该依赖在每个受保护请求上都会执行，仅在状态变化时记录以免刷屏。
+        # channels.available 反映根证书安装状态：为 false 时视频号解密链路不可用，
+        # 但它不参与在线判定，若不显式记录，证书故障在日志中完全不可见。
+        if (code, available) != (_last_service_state["code"], _last_service_state["available"]):
+            _last_service_state["code"] = code
+            _last_service_state["available"] = available
+            logger.info(
+                "[check_service] code=%s channels.available=%s version=%s",
+                code, available, data.get("data", {}).get("version")
+            )
+            if available is False:
+                # 接口文档标注 /api/status「go源码有bug 暂不可用」；实测在三张根证书
+                # 齐全、contact/search 能返回真实数据的机器上该字段依然为 false，
+                # 说明它不反映真实证书状态，不能作为故障判据，仅留档参考。
+                # 真实判据见 env_probe 启动时的根证书检查。
+                logger.warning(
+                    "[check_service] channels.available=false（该字段已知不可靠，"
+                    "请以启动日志 [环境] 段的根证书检查结果为准）"
+                )
+
+        return code == 0
 
     def clear_all_tasks(self) -> bool:
         """清空所有任务记录（取消所有任务，包括正在下载的）
@@ -270,9 +303,31 @@ class WechatVideoAPIClient:
                 timeout=self.timeout
             )
             data = resp.json()
-            return data.get("code") == 0
-        except Exception:
+        except (requests.RequestException, ValueError) as e:
+            logger.warning(
+                "[check_wechat_connected] 探测请求失败: %s: %s",
+                type(e).__name__, e
+            )
             return False
+
+        code = data.get("code")
+        if code != _last_wechat_state["code"]:
+            _last_wechat_state["code"] = code
+            if code == 0:
+                logger.info("[check_wechat_connected] 微信已连接")
+            else:
+                # 实测：根证书齐全的机器上，若尚未在微信中打开过视频号页面，
+                # 此处同样返回 code=400「请先初始化客户端 socket 连接」。
+                # 故不能由本项失败反推证书故障，两种成因需结合 [环境] 段判断。
+                logger.error(
+                    "[check_wechat_connected] 微信未连接 code=%s msg=%s —— "
+                    "成因一：尚未在微信中打开过视频号页面，注入脚本未回连后端；"
+                    "成因二：根证书未生效导致视频号页面白屏，注入无法完成。"
+                    "区分方法见启动日志 [环境] 段的根证书检查",
+                    code, data.get("msg")
+                )
+
+        return code == 0
 
     def search_authors_by_keyword(self, keyword: str, next_marker: str = None) -> dict:
         """搜索作者（返回标准结构）

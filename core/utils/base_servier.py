@@ -5,6 +5,7 @@
 import logging
 import socket
 import subprocess
+import threading
 import time
 import os
 import sys
@@ -133,8 +134,27 @@ class WechatVideoService:
             self.process = subprocess.Popen(
                 [self.exe_path],
                 cwd=os.path.dirname(self.exe_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 creationflags=CREATE_NO_WINDOW,
             )
+            self._start_time = time.time()
+            self._pid = self.process.pid
+            logger.info("[启动] Go 后端已派发 PID=%d", self._pid)
+
+            # 把 Go exe 的 stdout 实时转发到 logger，便于诊断 cert 安装等关键输出
+            threading.Thread(
+                target=self._drain_go_stdout,
+                args=(self.process.stdout,),
+                daemon=True,
+                name="goexe-stdout-drain",
+            ).start()
+            # 心跳: 5s/15s/30s 检查进程是否还活着
+            threading.Thread(
+                target=self._watch_go_process,
+                daemon=True,
+                name="goexe-watchdog",
+            ).start()
 
             for i in range(wait_seconds):
                 time.sleep(1)
@@ -159,6 +179,41 @@ class WechatVideoService:
             logger.error("[ERROR] 启动失败: %s", e)
             return False
 
+    def _drain_go_stdout(self, stream):
+        """把 Go exe 的 stdout 实时逐行写到 logger。解码失败时回退 repr。"""
+        try:
+            for raw in iter(stream.readline, b""):
+                try:
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                except Exception:
+                    line = repr(raw)
+                if line:
+                    logger.info("[goexe] %s", line)
+            stream.close()
+        except Exception as e:
+            logger.warning("[goexe] stdout drain 异常: %s: %s", type(e).__name__, e)
+
+    def _watch_go_process(self):
+        """心跳监控：5s/15s/30s 时检查 Go 后端进程是否还活着，秒退则报错。"""
+        checkpoints = [5, 15, 30]
+        start = self._start_time
+        for cp in checkpoints:
+            sleep_for = cp - (time.time() - start)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            if self.process is None:
+                return
+            ret = self.process.poll()
+            if ret is not None:
+                logger.error(
+                    "[goexe-watchdog] Go 后端在启动后 %ds 内已退出 exit_code=%s —— "
+                    "常见原因：MITM 根证书安装失败触发崩溃、未捕获异常",
+                    int(time.time() - start), ret,
+                )
+                return
+            logger.info("[goexe-watchdog] %ds 检查: Go 后端 PID=%d 仍在运行",
+                        cp, self._pid)
+
     def stop(self, wait_timeout: int = 10) -> bool:
         """停止服务，等待进程真正退出和端口释放"""
         if not self.is_process_running():
@@ -176,6 +231,10 @@ class WechatVideoService:
             # 等待进程真正退出
             for i in range(wait_timeout):
                 time.sleep(1)
+                if self.process and self.process.poll() is not None:
+                    logger.info("[停止] Go 后端已退出 exit_code=%s (等待 %d 秒)",
+                                self.process.poll(), i + 1)
+                    break
                 if not self.is_process_running():
                     logger.info("[OK] 进程已退出 (等待 %d 秒)", i + 1)
                     break
