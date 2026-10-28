@@ -24,7 +24,7 @@ async function refreshLogs() {
 
         const div = document.createElement('div');
         div.className = 'log-line';
-        div.innerHTML = `<span class="time">${l.time || ''}</span><span class="${msgCls}">${l.message || ''}</span>`;
+        div.innerHTML = `<span class="time">${escapeHtml(l.time || '')}</span><span class="${msgCls}">${escapeHtml(l.message || '')}</span>`;
         el.appendChild(div);
       });
     }

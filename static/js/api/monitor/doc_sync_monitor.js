@@ -390,14 +390,14 @@ const DocSyncMonitor = (() => {
             <line x1="12" y1="16" x2="12.01" y2="16"/>
           </svg>
         </div>
-        <div class="error-dialog-title">${title}</div>
-        <div class="error-dialog-message">${message}</div>
+        <div class="error-dialog-title">${escapeHtml(title)}</div>
+        <div class="error-dialog-message">${escapeHtml(message)}</div>
         ${suggestion ? `
           <div class="error-dialog-suggestion">
             <svg viewBox="0 0 20 20" fill="currentColor" class="suggestion-icon">
               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
             </svg>
-            <span>${suggestion}</span>
+            <span>${escapeHtml(suggestion)}</span>
           </div>
         ` : ''}
         <div class="error-dialog-buttons">

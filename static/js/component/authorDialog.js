@@ -322,14 +322,14 @@ function showRemoveDialog(username, nickname, authorId, totalVideos, downloadedV
       </div>
       <div class="dialog-title">确认删除作者</div>
       <div class="dialog-content">
-        <p>确定要删除作者 "<strong>${esc(nickname)}</strong>" 吗？</p>
+        <p>确定要删除作者 "<strong>${escHtml(nickname)}</strong>" 吗？</p>
         <p>视频记录: ${totalVideos} 个，已下载: ${downloadedVideos} 个 (${sizeStr})</p>
         ${warningHTML}
         <p class="dialog-hint">将同时删除作者、所有视频记录及已下载的视频文件</p>
       </div>
       <div class="dialog-buttons">
         <button class="btn-dialog secondary" onclick="closeDialog(this.closest('.dialog-overlay'))">取消</button>
-        <button class="btn-dialog danger" onclick="confirmRemoveAuthor('${esc(username)}', '${esc(authorId)}', this)">删除</button>
+        <button class="btn-dialog danger" data-action="confirm-remove-author" data-username="${escapeHtml(username)}" data-author-id="${escapeHtml(authorId)}">删除</button>
       </div>
     </div>
   `;
@@ -387,7 +387,7 @@ function switchDialogToProgressState(dialogBox, username) {
   progressView.className = 'delete-progress-view';
   progressView.id = 'deleteProgressView';
   progressView.innerHTML =
-    '<div class="delete-progress-title">正在删除 "' + nickname + '"</div>' +
+    '<div class="delete-progress-title">正在删除 "' + escapeHtml(nickname) + '"</div>' +
     '<svg class="circle-progress-svg" viewBox="0 0 100 100" id="deleteCircleSvg">' +
       '<circle class="circle-progress-track" cx="50" cy="50" r="40" stroke-width="6" fill="none" stroke-dasharray="' + CIRCLE_C + '" stroke-dashoffset="0"/>' +
       '<circle class="circle-progress-fill" cx="50" cy="50" r="40" stroke-width="6" fill="none" stroke-dasharray="' + CIRCLE_C + '" stroke-dashoffset="' + CIRCLE_C + '" transform="rotate(-90 50 50)" id="deleteCircleFill"/>' +
@@ -512,7 +512,7 @@ function switchDialogToDoneState(data) {
     '</div>' +
     '<div class="dialog-title">删除完成</div>' +
     '<div class="dialog-content">' +
-      '<p>作者 "' + (decodeURIComponent(data.author_name || '')) + '" 及所有数据已删除</p>' +
+      '<p>作者 "' + escapeHtml(decodeURIComponent(data.author_name || '')) + '" 及所有数据已删除</p>' +
       '<p class="dialog-detail">取消 ' + (data.tasks_cancelled || 0) + ' 个任务，删除 ' + (data.files_deleted || 0) + ' 个文件，' + (data.dirs_deleted || 0) + ' 个文件夹</p>' +
     '</div>' +
     '<div class="dialog-buttons">' +

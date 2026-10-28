@@ -291,7 +291,7 @@ function updateDownloadStatus(videoIds) {
       badge.innerHTML = `
         <div class="download-header">
           <span class="progress-percent">${pct}%</span>
-          <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${task.id}')" aria-label="取消下载">×</button>
+          <button class="cancel-btn" data-action="cancel" data-id="${escapeHtml(task.id)}" aria-label="取消下载">×</button>
         </div>
         <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
         <div class="download-stats">
@@ -460,7 +460,7 @@ function _showDownloadTypeSelect(shortCount, replayCount, totalCount, nickname, 
     '</div>' +
     '<div class="dialog-title">下载全部待下载视频</div>' +
     '<div class="dialog-content">' +
-      '<p class="batch-type-hint">' + nickname + ' 共有 ' + totalCount + ' 个待下载视频</p>' +
+      '<p class="batch-type-hint">' + escapeHtml(nickname) + ' 共有 ' + totalCount + ' 个待下载视频</p>' +
       '<div class="batch-type-options">' + typeBtnsHtml + '</div>' +
     '</div>' +
     '<div class="dialog-buttons">' +
@@ -703,7 +703,7 @@ async function retryDownload(videoId) {
     } else {
       if (badge) {
         badge.className = 'video-status-badge failed';
-        badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + videoId + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+        badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="' + escapeHtml(videoId) + '" title="重新下载" aria-label="重新下载">↻</button>';
         badge.title = data.msg || '重新下载失败';
       }
       showToast({ type: 'error', title: '重新下载失败', message: data.msg || '未知错误' });
@@ -711,7 +711,7 @@ async function retryDownload(videoId) {
   } catch (e) {
     if (badge) {
       badge.className = 'video-status-badge failed';
-      badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + videoId + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+      badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="' + escapeHtml(videoId) + '" title="重新下载" aria-label="重新下载">↻</button>';
       badge.title = '网络错误';
     }
     showToast({ type: 'error', title: '重新下载失败', message: e.message });

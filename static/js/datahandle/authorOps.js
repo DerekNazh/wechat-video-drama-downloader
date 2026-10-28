@@ -286,22 +286,15 @@ function searchAuthors() {
 
       const existingUsernames = new Set(_allAuthors.map(a => a.username));
 
-      const escAttr = (s) => (s || '')
-        .replace(/\\/g, '\\\\')
-        .replace(/'/g, "\\'")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, ' ')
-        .replace(/\r/g, '');
-
       let html = '';
       results.forEach(r => {
         const isAdded = existingUsernames.has(r.username);
         const avatarHtml = r.head_url
-          ? `<img src="${r.head_url}" onerror="this.style.display='none'">`
+          ? `<img src="${escapeHtml(r.head_url)}" onerror="this.style.display='none'">`
           : '<div class="avatar-placeholder">?</div>';
 
         const tagHtml = r.profession
-          ? `<span class="result-tag">${r.profession}</span>`
+          ? `<span class="result-tag">${escHtml(r.profession)}</span>`
           : '';
 
         const escHtml = (s) => (s || '')
@@ -311,6 +304,13 @@ function searchAuthors() {
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#39;')
           .replace(/\n/g, '<br>');
+        const escAttr2 = (s) => (s || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
+          .replace(/\n/g, ' ');
         const sigHtml = r.signature
           ? `<div class="result-signature">${escHtml(r.signature)}</div>`
           : '';
@@ -332,9 +332,9 @@ function searchAuthors() {
               <div class="result-hint">添加后将同步短视频 + 直播回放</div>
             </div>
             <button class="result-add-btn ${isAdded ? 'added' : ''}"
-                    id="addBtn-${r.username.replace(/@/g, '_')}"
-                    data-username="${escAttr(r.username)}"
-                    data-nickname="${escAttr(r.nickname)}"
+                    id="addBtn-${escapeHtml(r.username.replace(/@/g, '_'))}"
+                    data-username="${escapeHtml(r.username)}"
+                    data-nickname="${escapeHtml(r.nickname)}"
                     ${isAdded ? 'disabled' : ''}
                     onclick="addAuthorFromButton(this)">
               ${isAdded ? '已添加' : '添加'}

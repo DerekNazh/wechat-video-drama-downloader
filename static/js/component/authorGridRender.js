@@ -137,20 +137,19 @@ function renderAuthorListView(el, list) {
 
     const initial = (author.nickname || '?')[0];
     const avatarHtml = author.head_url
-      ? `<img src="${author.head_url}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="fallback" style="display:none">${initial}</span>`
-      : `<span class="fallback">${initial}</span>`;
-
-    const escNickname = (author.nickname || '').replace(/'/g, "\\'");
+      ? `<img src="${escapeHtml(author.head_url)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="fallback" style="display:none">${escapeHtml(initial)}</span>`
+      : `<span class="fallback">${escapeHtml(initial)}</span>`;
 
     html += `
       <div class="author-list-item ${author.status === 'downloading' ? 'downloading' : ''}"
-           data-username="${author.username}"
-           onclick="openAuthorDetail('${author.username}', '${escNickname}')">
+           data-action="open-author"
+           data-username="${escapeHtml(author.username)}"
+           data-nickname="${escapeHtml(author.nickname || '未知')}">
         <div class="author-list-avatar">
           ${avatarHtml}
           <span class="status-dot ${statusClass}"></span>
         </div>
-        <div class="author-list-name">${author.nickname || '未知'}</div>
+        <div class="author-list-name">${escapeHtml(author.nickname || '未知')}</div>
         <span class="author-list-status ${statusClass}">${statusText}</span>
         <div class="author-list-stats">
           <span class="num short-video">${shortVideoDownloaded}/${shortVideoCount}</span><span class="sep">·</span>
@@ -160,7 +159,7 @@ function renderAuthorListView(el, list) {
           <div class="author-list-progress-fill" style="width:${progress}%"></div>
         </div>
         <div class="author-list-percent">${progress}%</div>
-        <button class="author-list-delete" onclick="event.stopPropagation(); removeAuthor('${author.username}', '${escNickname}', '${author.id}')" title="移除作者">×</button>
+        <button class="author-list-delete" data-action="remove-author" data-username="${escapeHtml(author.username)}" data-nickname="${escapeHtml(author.nickname || '未知')}" data-id="${escapeHtml(author.id)}" title="移除作者">×</button>
       </div>
     `;
   });
@@ -208,20 +207,19 @@ function renderAuthorCardView(el, list) {
 
     const initial = (author.nickname || '?')[0];
     const avatarHtml = author.head_url
-      ? `<img src="${author.head_url}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="fallback" style="display:none">${initial}</span>`
-      : `<span class="fallback">${initial}</span>`;
-
-    const escNickname = (author.nickname || '').replace(/'/g, "\\'");
+      ? `<img src="${escapeHtml(author.head_url)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><span class="fallback" style="display:none">${escapeHtml(initial)}</span>`
+      : `<span class="fallback">${escapeHtml(initial)}</span>`;
 
     html += `
       <div class="author-card ${author.status === 'downloading' ? 'downloading' : ''}"
-           data-username="${author.username}"
-           onclick="openAuthorDetail('${author.username}', '${escNickname}')">
-        <button class="author-delete-btn" onclick="event.stopPropagation(); removeAuthor('${author.username}', '${escNickname}', '${author.id}')" title="移除作者">×</button>
+           data-action="open-author"
+           data-username="${escapeHtml(author.username)}"
+           data-nickname="${escapeHtml(author.nickname || '未知')}">
+        <button class="author-delete-btn" data-action="remove-author" data-username="${escapeHtml(author.username)}" data-nickname="${escapeHtml(author.nickname || '未知')}" data-id="${escapeHtml(author.id)}" title="移除作者">×</button>
         <div class="author-card-header">
           <div class="author-avatar">${avatarHtml}</div>
           <div class="author-card-info">
-            <div class="author-name">${author.nickname || '未知'}</div>
+            <div class="author-name">${escapeHtml(author.nickname || '未知')}</div>
             <span class="author-status ${statusClass}">
               <span class="dot ${statusClass === 'downloading' ? 'green' : ''}"></span>
               ${statusText}

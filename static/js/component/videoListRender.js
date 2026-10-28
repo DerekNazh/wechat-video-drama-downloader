@@ -1,15 +1,10 @@
 // 视频列表渲染组件
 
-function escapeAttr(str) {
-  return (str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 function buildPausedBadgeHTML(pct, taskId) {
-  var safeTaskId = escapeAttr(taskId || '');
   return '<div class="paused-header">' +
     '<span class="paused-icon">‖</span>' +
     '<span class="progress-percent">' + pct + '%</span>' +
-    '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + safeTaskId + '\')" title="取消下载" aria-label="取消下载">×</button>' +
+    '<button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(taskId || '') + '" title="取消下载" aria-label="取消下载">×</button>' +
   '</div>' +
   '<div class="progress-bar"><div class="paused-fill" style="width:' + pct + '%"></div></div>' +
   '<span class="paused-label">已暂停</span>';
@@ -202,7 +197,7 @@ function renderVideoList(videos, filter = 'all') {
 
     let statusBadge = '';
     if (video.downloaded) {
-      statusBadge = `<span class="video-status-badge downloaded" data-path="${escapeAttr(video.download_path || '')}" onclick="event.stopPropagation(); openVideo(this.dataset.path)">已下载</span>`;
+      statusBadge = `<span class="video-status-badge downloaded" data-action="open-video" data-path="${escapeHtml(video.download_path || '')}" title="打开视频">已下载</span>`;
     } else if (downloadingIds.has(video.id)) {
       const progress = progressMap[video.id];
       const pct = progress?.percent || 0;
@@ -210,11 +205,11 @@ function renderVideoList(videos, filter = 'all') {
       const isPaused = progress?.status === 'paused';
       const isFailed = progress?.status === 'failed';
       if (isFailed) {
-        statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload('${video.id}')" title="重新下载" aria-label="重新下载">↻</button></span>`;
+        statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="${escapeHtml(video.id)}" title="重新下载" aria-label="重新下载">↻</button></span>`;
       } else if (isWaiting) {
         // 等待中：排队等待并发槽位，会自动开始
         const taskId = progress?.id || '';
-        statusBadge = `<span class="video-status-badge waiting" title="等待并发槽位，将自动开始下载"><span class="waiting-text">等待中</span><button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button></span>`;
+        statusBadge = `<span class="video-status-badge waiting" title="等待并发槽位，将自动开始下载"><span class="waiting-text">等待中</span><button class="cancel-btn" data-action="cancel" data-id="${escapeHtml(taskId)}" title="取消下载" aria-label="取消下载">×</button></span>`;
       } else if (isPaused) {
         const rawDownloaded = progress?.downloaded || 0;
         const rawSize = progress?.size || 0;
@@ -235,7 +230,7 @@ function renderVideoList(videos, filter = 'all') {
           <span class="video-status-badge downloading" title="${tooltip}">
             <div class="download-header">
               <span class="progress-percent">${pct}%</span>
-              <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${taskId}')" title="取消下载" aria-label="取消下载">×</button>
+              <button class="cancel-btn" data-action="cancel" data-id="${escapeHtml(taskId)}" title="取消下载" aria-label="取消下载">×</button>
             </div>
             <div class="progress-bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:${pct}%"></div></div>
             <div class="download-stats">
@@ -246,26 +241,26 @@ function renderVideoList(videos, filter = 'all') {
       }
     } else if (progressMap[video.id] && progressMap[video.id].status === 'failed') {
       // failed 任务不在 downloadingIds 中，但需要在 progressMap 中找到以渲染 failed badge
-      statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload('${video.id}')" title="重新下载" aria-label="重新下载">↻</button></span>`;
+      statusBadge = `<span class="video-status-badge failed" title="恢复下载失败"><span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="${escapeHtml(video.id)}" title="重新下载" aria-label="重新下载">↻</button></span>`;
     } else {
       statusBadge = `<span class="video-status-badge pending">待下载</span>`;
     }
 
     const openBtn = video.downloaded && video.download_path
-      ? `<button class="video-open-btn" data-path="${escapeAttr(video.download_path)}" onclick="event.stopPropagation(); openVideo(this.dataset.path)" title="打开视频">▶</button>`
+      ? `<button class="video-open-btn" data-action="open-video" data-path="${escapeHtml(video.download_path)}" title="打开视频">▶</button>`
       : '';
 
     const rowClass = selected + (downloadingIds.has(video.id) ? ' downloading' : '');
 
     html += `
       <div class="video-row ${rowClass}" data-id="${video.id}">
-        <div class="video-checkbox" onclick="event.stopPropagation(); toggleVideoSelect('${video.id}')" role="checkbox" aria-checked="${_selectedVideos.has(video.id) ? 'true' : 'false'}" aria-label="选择视频" tabindex="0"></div>
+        <div class="video-checkbox" data-action="toggle-select" data-id="${escapeHtml(video.id)}" role="checkbox" aria-checked="${_selectedVideos.has(video.id) ? 'true' : 'false'}" aria-label="选择视频" tabindex="0"></div>
         <div class="video-thumb-small">
           ${coverHtml}
           ${durationStr ? `<span class="video-duration">${durationStr}</span>` : ''}
         </div>
         <div class="video-info">
-          <div class="video-title">${title}</div>
+          <div class="video-title">${escapeHtml(title)}</div>
           <div class="video-meta">
             <span>${date}</span>
             ${durationStr ? `<span class="meta-duration">${durationStr}</span>` : ''}
@@ -401,14 +396,14 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
         if (task.status === 'failed') {
           if (!badge.classList.contains('failed')) {
             badge.className = 'video-status-badge failed';
-            badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + (task.video_id || '') + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+            badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="' + escapeHtml(task.video_id || '') + '" title="重新下载" aria-label="重新下载">↻</button>';
             badge.title = '恢复下载失败';
           }
         } else if (task.status === 'wait' || task.status === 'pending') {
           // 等待中：排队等待并发槽位（pending = 已提交等待 Go 处理，语义同 wait）
           if (!badge.classList.contains('waiting')) {
             badge.className = 'video-status-badge waiting';
-            badge.innerHTML = '<span class="waiting-text">等待中</span><button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + (task.id || '') + '\')" title="取消下载" aria-label="取消下载">×</button>';
+            badge.innerHTML = '<span class="waiting-text">等待中</span><button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(task.id || '') + '" title="取消下载" aria-label="取消下载">×</button>';
             badge.title = '等待并发槽位，将自动开始下载';
           }
         } else if (badge.classList.contains('paused') && !badge.classList.contains('resuming')) {
@@ -432,7 +427,7 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
           badge.innerHTML = `
             <div class="download-header">
               <span class="progress-percent">${pct}%</span>
-              <button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload('${task.id}')">×</button>
+              <button class="cancel-btn" data-action="cancel" data-id="${escapeHtml(task.id)}">×</button>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
             <div class="download-stats">
@@ -460,7 +455,7 @@ function updateVideoStatusIncremental(el, videos, downloadingIds, progressMap) {
     } else if (progressMap[video.id] && progressMap[video.id].status === 'failed') {
       if (!badge.classList.contains('failed')) {
         badge.className = 'video-status-badge failed';
-        badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + (progressMap[video.id].video_id || video.id) + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+        badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="' + escapeHtml(progressMap[video.id].video_id || video.id) + '" title="重新下载" aria-label="重新下载">↻</button>';
         badge.title = '恢复下载失败';
       }
     } else {
@@ -577,7 +572,8 @@ function updateSingleVideoProgress(videoId, task) {
     }
     var cancelBtn = badge.querySelector('.cancel-btn');
     if (cancelBtn) {
-      cancelBtn.setAttribute('onclick', "event.stopPropagation(); cancelDownload('" + (task.id || '') + "')");
+      cancelBtn.setAttribute('data-action', 'cancel');
+      cancelBtn.setAttribute('data-id', task.id || '');
     }
   } else if (badge.classList.contains('resuming')) {
     // resuming 状态：等进度真正更新再切换到 downloading
@@ -587,7 +583,7 @@ function updateSingleVideoProgress(videoId, task) {
       badge.innerHTML =
         '<div class="download-header">' +
           '<span class="progress-percent">' + pct + '%</span>' +
-          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
+          '<button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(taskId) + '" aria-label="取消下载">×</button>' +
         '</div>' +
         '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
         '<div class="download-stats">' +
@@ -602,7 +598,8 @@ function updateSingleVideoProgress(videoId, task) {
     // 只更新 cancel 按钮的 task_id
     var cancelBtn = badge.querySelector('.cancel-btn');
     if (cancelBtn) {
-      cancelBtn.setAttribute('onclick', "event.stopPropagation(); cancelDownload('" + (task.id || '') + "')");
+      cancelBtn.setAttribute('data-action', 'cancel');
+      cancelBtn.setAttribute('data-id', task.id || '');
     }
     // wait 状态收到有效进度时，说明 Go 分配了槽位，切换为 downloading
     if (badge.classList.contains('waiting') && (pct > 0 || hasSpeed)) {
@@ -611,7 +608,7 @@ function updateSingleVideoProgress(videoId, task) {
       badge.innerHTML =
         '<div class="download-header">' +
           '<span class="progress-percent">' + pct + '%</span>' +
-          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
+          '<button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(taskId) + '" aria-label="取消下载">×</button>' +
         '</div>' +
         '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
         '<div class="download-stats">' +
@@ -633,7 +630,7 @@ function updateSingleVideoProgress(videoId, task) {
     badge.innerHTML =
       '<div class="download-header">' +
         '<span class="progress-percent">' + pct + '%</span>' +
-        '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + taskId + '\')" aria-label="取消下载">×</button>' +
+        '<button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(taskId) + '" aria-label="取消下载">×</button>' +
       '</div>' +
       '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
       '<div class="download-stats">' +

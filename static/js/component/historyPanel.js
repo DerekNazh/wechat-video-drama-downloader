@@ -133,11 +133,11 @@ function renderHistoryList() {
     var size = _formatFileSize(item.file_size);
     var duration = _formatDuration(item.duration);
     var username = item.username || '';
-    var clickHandler = username
-      ? 'loadAuthorDetail(\'' + username.replace(/'/g, "\\'") + '\')'
+    var rowAttr = username
+      ? ' data-action="open-author-history" data-username="' + escapeHtml(username) + '"'
       : '';
 
-    html += '<tr' + (clickHandler ? ' onclick="' + clickHandler + '"' : '') + '>' +
+    html += '<tr' + rowAttr + '>' +
       '<td class="col-time">' + time + '</td>' +
       '<td class="col-author">' + authorName + '</td>' +
       '<td class="col-title" title="' + _escapeHtml(item.title || '') + '">' + title + '</td>' +

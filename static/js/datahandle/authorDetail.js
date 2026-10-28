@@ -236,7 +236,7 @@ function initSSEListener() {
                   var badge = row.querySelector('.video-status-badge');
                   if (!badge) return;
                   badge.className = 'video-status-badge failed';
-                  badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" onclick="event.stopPropagation(); retryDownload(\'' + d.video_id + '\')" title="重新下载" aria-label="重新下载">↻</button>';
+                  badge.innerHTML = '<span class="failed-text">恢复失败</span><button class="retry-btn" data-action="retry" data-id="' + escapeHtml(d.video_id) + '" title="重新下载" aria-label="重新下载">↻</button>';
                   badge.title = '恢复下载失败';
                 });
               }
@@ -903,11 +903,11 @@ async function loadAuthorDetail(username) {
   localVideosBefore.slice(0, 5).forEach(v => {
   });
 
-  // 头像
+  // 头像（URL 与首字母均为外部数据，属性/文本上下文转义）
   const initial = (author?.nickname || '?')[0];
   document.getElementById("authorAvatar").innerHTML = author?.head_url
-    ? `<img src="${author.head_url}" onerror="this.style.display='none'">`
-    : `<span style="font-size:24px;font-weight:600;color:var(--text-secondary)">${initial}</span>`;
+    ? `<img src="${escapeHtml(author.head_url)}" onerror="this.style.display='none'">`
+    : `<span style="font-size:24px;font-weight:600;color:var(--text-secondary)">${escapeHtml(initial)}</span>`;
 
   document.getElementById("authorName").textContent = author?.nickname || '未知';
 

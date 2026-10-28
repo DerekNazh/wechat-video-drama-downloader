@@ -284,7 +284,7 @@ var ReactiveRenderer = {
       badge.innerHTML =
         '<div class="download-header">' +
           '<span class="progress-percent">' + pct + '%</span>' +
-          '<button class="cancel-btn" onclick="event.stopPropagation(); cancelDownload(\'' + task.id + '\')" aria-label="取消下载">×</button>' +
+          '<button class="cancel-btn" data-action="cancel" data-id="' + escapeHtml(task.id) + '" aria-label="取消下载">×</button>' +
         '</div>' +
         '<div class="progress-bar" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><div class="progress-fill" style="width:' + pct + '%"></div></div>' +
         '<div class="download-stats">' +

@@ -20,8 +20,8 @@ function showToast(options) {
   toast.innerHTML = `
     ${icons[type] || icons.warning}
     <div class="toast-content">
-      ${title ? `<div class="toast-title">${title}</div>` : ''}
-      ${message ? `<div class="toast-message">${message}</div>` : ''}
+      ${title ? `<div class="toast-title">${escapeHtml(title)}</div>` : ''}
+      ${message ? `<div class="toast-message">${escapeHtml(message)}</div>` : ''}
     </div>
     <button class="toast-close" onclick="this.parentElement.classList.add('out'); setTimeout(() => this.parentElement.remove(), 300)">×</button>
   `;

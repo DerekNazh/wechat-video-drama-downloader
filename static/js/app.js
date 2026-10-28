@@ -115,9 +115,47 @@ async function initConfig() {
 
 initConfig();
 
+// ==================== 全局事件委托 ====================
+// 统一处理 data-action 交互：替代内联 onclick 参数拼接（XSS 修复，OWASP Web Frontend Security），
+// 同时为 CSP script-src 'self' 铺路（Electron/WebView2 官方建议禁 inline script）。
+// 渲染函数只输出 data-action + data-* 属性，不拼 JS 字符串。
+function initGlobalDelegation() {
+  document.addEventListener('click', function (e) {
+    var el = e.target && e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!el || !el.dataset || !el.dataset.action) return;
+    var action = el.dataset.action;
+    var id = el.dataset.id;
+    if (action === 'cancel' && typeof cancelDownload === 'function') {
+      e.stopPropagation();
+      cancelDownload(id);
+    } else if (action === 'retry' && typeof retryDownload === 'function') {
+      e.stopPropagation();
+      retryDownload(id);
+    } else if (action === 'open-video' && typeof openVideo === 'function') {
+      e.stopPropagation();
+      openVideo(el.dataset.path);
+    } else if (action === 'toggle-select' && typeof toggleVideoSelect === 'function') {
+      e.stopPropagation();
+      toggleVideoSelect(id);
+    } else if (action === 'open-author' && typeof openAuthorDetail === 'function') {
+      openAuthorDetail(el.dataset.username, el.dataset.nickname);
+    } else if (action === 'remove-author' && typeof removeAuthor === 'function') {
+      e.stopPropagation();
+      removeAuthor(el.dataset.username, el.dataset.nickname, el.dataset.id);
+    } else if (action === 'open-author-history' && typeof loadAuthorDetail === 'function') {
+      loadAuthorDetail(el.dataset.username);
+    } else if (action === 'confirm-remove-author' && typeof confirmRemoveAuthor === 'function') {
+      e.stopPropagation();
+      confirmRemoveAuthor(el.dataset.username, el.dataset.authorId, el);
+    }
+  });
+}
+
+
 async function initApp() {
   startLoadingProgress();
   // FAB panel starts closed — user clicks FAB to open
+  initGlobalDelegation();
 
   // 1. 拉全量数据（作者+视频，不需要 Go 服务）
   await loadAllDataFromBackend();
@@ -338,12 +376,9 @@ async function pollNewVideos() {
       if (!authorData) return;
 
       if (!authorData.videos[nv.video_id]) {
-        // 通过 State 层插入，再同步到 _authorVideosData
-        if (State.videos._data[username]) {
-          State.videos._data[username].videos[nv.video_id] = mapVideo(nv);
-        } else {
-          State.videos._data[username] = { nickname: '', videos: { [nv.video_id]: mapVideo(nv) } };
-        }
+        // 通过 State 层插入（setAuthorVideos 保持反向索引与事件一致性，杜绝直接改 State 内部 _data）
+        var currentList = State.videos.getAuthorVideos(username);
+        State.videos.setAuthorVideos(username, currentList.concat([mapVideo(nv)]), authorData.nickname);
         hasUpdate = true;
       }
     });
