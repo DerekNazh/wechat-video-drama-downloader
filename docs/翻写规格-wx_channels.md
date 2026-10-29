@@ -639,6 +639,7 @@ wx_channels_download（微信视频号域）
 ## 四、执行纪律
 
 - 严格依赖序：B1→B2→B3 硬链；B4/B9 可并行；B5/B8 等 B4+B9；B6 独立；B7 等 B3。
+- **跨期排期（2026-10-29 拍板）**：一期（B 系列视频号域）与二期（S1-S5 短剧域）**两轨并行开发**；二期开发用测试端口验证，**2023 生产端口交接点=一期完成（wx_video_download 退役）**；汇合后 S6 联调→S7 退役收口。共用底座（B3 解密链/download_tasks/SSE）一期先行。
 - 每块独立验收；上层验收包含下层已过。
 - 翻写代码禁止上游版权标识/原注释/变量名照抄（全新命名）。
 - 上游源码仅在 research/ 参考，不入主代码路径。
@@ -832,7 +833,11 @@ wx_channels_download（微信视频号域）
 **⚠️ 待确认项（2026-10-29 用户挂起，明天实测后补充）**：**"微信小程序短剧"是否走同一套 qq.com 链路，上游无单独标注**——用户将实测确认短剧真实 URL 特征；若命中上表则零额外工作，若走其他 CDN 域名则补一条特征。**在用户确认前，S4 注入规则不写死短剧专属特征，仅按上表通用特征实现。**
 
 
-### 6.5 二期待办（依赖序，排期：一期完成后启动）
+### 6.5 二期待办（依赖序，排期 v2：与一期两轨并行 + 汇合点收口，2026-10-29 用户拍板）
+
+> **排期判断（2026-10-29）**：一期 B 系列（视频号域：解密/下载链）与二期 S1-S5（短剧域：MITM 嗅探链）是**两套独立代码域，开发互不阻塞**；二期开发阶段用**测试端口（如 20230）**验证 mitmproxy，不碰 2023，无需等一期退役 → **两轨并行开发优于串行**。
+> **汇合点**：①一期 B 系列完成（wx_video_download.exe 退役，2023 端口空出，base_servier.py:64-74 实锤 2023 归 wx_video_download 占用）②明天实测确认短剧注入点（virtual_svg-icons-register.publish 是否加载）→ 切 2023 生产端口 → **S6 端到端联调** → **S7 退役收口**。
+> **执行顺序（两轨）**：轨道A（一期主线）= B1→B2→B3→B5→B10→B11（B4/B9 并行、B8/B6 独立）；轨道B（二期线）= S2（测试端口验证基座）→S3（A-v2 注入）→S4（注入模块）→S5（拦截解析）→S1（CA）。共用底座 B3 解密链/download_tasks/SSE 一期先行，二期 S5/S6 直接复用。
 
 - [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
 - [ ] S2 **mitmproxy 基座接入**（2026-10-29 决策：**单端口 2023 收敛**——视频号 B11 与短剧嗅探共用同一 mitmdump 实例，不做 8899→2023→2022 多端口转发；形态=mitmdump CLI 子进程+脚本 `-s core/sniff/mitm_scripts/wechat_sniff.py`，与 res_download_service.py 管理模式同构（端口清理/就绪探测/自愈复用）；白名单域 MITM（res.wx.qq.com/qq.com/finder.video.qq.com/channels.weixin.qq.com）、其余透明透传不碰；CA=mitmproxy 自带 confdir 固定（%APPDATA%\doubao-downloader\mitmproxy\），CA 永不更换，S1 装该 CA；脚本 HTTP 回调主应用 /api/v1/sniff/resources；`--set web_port 0` 关 web 界面；**打包风险**：pyinstaller 需 hidden-imports，验收含打包冒烟）
