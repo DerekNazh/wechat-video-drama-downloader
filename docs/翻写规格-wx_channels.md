@@ -869,7 +869,7 @@ wx_channels_download（微信视频号域）
 
 ### 6.9 CD 闭环（自动更新，2026-10-29 落档）
 
-> **形态=B 自动下载+提示安装**（行业主流：electron-updater/Tauri 默认；不用 C 全自动静默——需签名+服务化，暂缓签名下用户可控更稳；不用 A 仅提示——体验差）。链路=启动/每4h→GET 版本清单 JSON→版本对比→有新版提示→后台下载→sha256 校验→用户确认→退出主应用→Inno /VERYSILENT 静默安装→重启。
+> **形态=B 自动下载+提示安装**（行业主流：electron-updater/Tauri 默认；不用 C 全自动静默——需签名+服务化，暂缓签名下用户可控更稳；不用 A 仅提示——体验差）。链路=启动/每4h→GET 版本清单 JSON→版本对比→有新版提示→后台下载→sha256 校验→用户确认→退出主应用→Inno /VERYSILENT 静默安装→重启。**客户端=框架无关纯 Python 模块（core/updater.py）**：requests 拉 latest.json→语义版本比较→下载 OSS→sha256→提示→退出→调 Inno→重启；不依赖 GUI 框架，pywebview 6.2（WebView2，规格 §〇 前端容器）仅挂"启动检查/设置页检查"入口，换 GUI 无需改 updater.py。
 > **版本清单=柠檬后台动态生成**（2026-10-29 知识库核实修正：复用已有 `/updates/{app_id}/latest.json` 路由+AppVersion 版本表，NPM proxy 9.conf 已配 /updates/；发布/回滚=改 AppVersion 记录→latest.json 自动指向新版/旧版，机制现成）契约**用拾光格式**（wails 已实战）：`{version,sha256,size,url,changelog}`，Python 客户端语义版本比较+sha256 校验、无签名——与 G2 暂缓签名一致；url 相对 updates 根拼接 → **阿里云 OSS artifacts 桶**（lemon-kami-artifacts 按产品目录）；downloader 应用 app_id=`app_3b7743b66b114c42aa655bb19a61d4f1`；检查时机=启动+每 4 小时。
 > **Inno 更新要点**：更新包与原安装**同 AppId**→覆盖升级不新增 Add/Remove 条目（Inno 官方 FAQ）；安装前用 **G4 Mutex** 检测应用退出；/VERYSILENT 静默安装（官方支持）；更新包=新安装包自动带 LICENSE/NOTICE（G6.8 合规不丢）。
 > **安全**：sha256 校验（必须）+HTTPS 拉清单；签名暂缓（G2），未来 OV 后加 Authenticode。
