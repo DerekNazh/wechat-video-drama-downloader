@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.9 B1-B4 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 全部落执行级，逐块深入推进中）
+> 状态：v0.10 B1-B5+B9 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 + API 客户端 B5 + Cookie 支撑 B9 全部落执行级，逐块深入推进中）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -259,11 +259,104 @@ wx_channels_download（微信视频号域）
 
 **工作量**：2 个子块（下载解密管道 + 单测），1-1.5 天。
 
-### B5 API 客户端——L3
-- **双通道**：share_url 解析 + **WebSocket 直连**（ServeWebsocket/RequestFrontend 走前端 WS 桥）。
-- **方法清单（client.go 实锤）**：SearchChannelsContact / FetchChannelsFeedListOfContact / FetchChannelsLiveReplayList / FetchLiveProfile / FetchChannelsInteractionedFeedList / FetchChannelsFollowList / FetchChannelsPlayHistory / FetchFeedPage / CheckSphCookie。
-- **关键依赖**：yuanbao.tencent.com cookie（身份凭据）。
-- 产出 `core/api/wxchannels_client.py`；验收：拉作者主页/作品列表字段与红狐/TikHub 对齐。
+### B5 API 客户端（HTTP+WS）——L3（执行级，2026-10-29 落档）
+
+**上游源码**：`pkg/scraper/wxchannels/client.go`（530 行，逐行读毕）+ `util.go`（70 行，逐行读毕）
+
+**核心架构认知（重要）**：B5 **不是**直接调微信 HTTP API 的客户端——它是**通过 WebSocket 连接"已打开微信视频号网页的前端页面"（浏览器注入 agent），向页面发送 `api_call` 消息，由页面 JS 调真实微信 API 并把结果经 WS 回传**。即"前端转发代理"模式：
+- 浏览器页面持有微信登录态（Cookie），页面内注入的 agent JS 注册了 `key:channels:*` 的 API 处理函数。
+- Go 服务端 WS 升级浏览器连接（client.go:135-203 `ServeWebsocket`），页面里 agent JS 作为 WS 客户端连上来。
+- `RequestFrontend(endpoint, body, timeout)`（client.go:253-305）：分配自增 id → 封装 `APIClientWSMessage{Type:"api_call", Data:{ID,Key,Body}}` → 写入 WS → 等页面回 `ClientWebsocketResponse{Id, Data}`（用 map[id]chan 匹配，client.go:192-202）→ 超时返回 "request timed out"。
+
+**上游逻辑（逐函数）**：
+- 消息结构（util.go:50-69）：`APIClientWSMessage{type,data,error}`、`ClientWebsocketRequestBody{id,key,data}`、`ClientWebsocketResponse{id,data}`（data 为 json.RawMessage 原样透传）。
+- `Client` 结构（client.go:48-61）：`ws_clients`（连接集合）、`requests`（id→chan 待响应表）、`cache`（响应缓存）、`req_seq`（原子自增）、`cookie_reader`、`sph_cookie`、三个回调 `OnConnected/OnDisconnected/OnMessage`。
+- `Fetch(params)`（client.go:75-85）：URL 分派——`^https://weixin\.qq\.com/sph/...` → `fetch_profile_with_share_url`（走元宝 Cookie，B8）；`channels.weixin.qq.com/web/pages/feed`（oid+nid 齐）→ `FetchFeedPage`；否则 `ErrUnsupportedURL`。
+- `resolve_sph_cookie`（client.go:100-122）：元宝 Cookie 解析优先级：cookies.Reader（.tencent.com 域）→ 配置 fallback `sph_cookie` → 报错。**这是 B5 与 B9 的接缝**。
+- `ServeWebsocket`（client.go:135-203）：WS 升级（允许任意 Origin）→ 注册客户端 → `write_pump`（心跳 5s Ping + 10s 写超时，util.go:15-48）→ 可选 `refresh_interval` 周期 `ReloadChannels()`（client.go:152-170）→ 读循环：页面回包按 id 投递到 chan（client.go:186-202）。
+- `RequestFrontend`（client.go:253-305）：核心 RPC——注册 id → 挑一个 client 发消息（Send 缓冲满即报错）→ select 等响应或超时。
+- **9 个业务方法**（全部 `RequestFrontend("key:channels:xxx", body, timeout)` + 缓存）：
+  | 方法 | key | 请求体 | 缓存 |
+  |---|---|---|---|
+  | `SearchChannelsContact` | contact_list | {keyword,next_marker} | 5min |
+  | `FetchChannelsFeedListOfContact` | feed_list | {username@finder,next_marker} | 5min |
+  | `FetchChannelsLiveReplayList` | live_replay_list | {username@finder,next_marker} | 5min |
+  | `FetchLiveProfile` | live_profile | {username,oid,nid,id} | 无 |
+  | `FetchChannelsInteractionedFeedList` | interactioned_list | {flag,next_marker} | 5min |
+  | `FetchChannelsFollowList` | follow_list | {next_marker} | 5min |
+  | `FetchChannelsPlayHistory` | play_history | {next_marker} | 5min |
+  | `FetchChannelsFeedProfile` | feed_profile | {url,oid,nid,eid} | 60min |
+  | `FetchChannelsFeedCommentList` | fetch_feed_comment_list | {oid,nid,comment_id,next_marker} | 60min |
+  | `FetchChannelsFeedShareUrl` | feed_share_url | {oid} | 60min |
+  | `ReloadChannels` | reload | nil | 无 |
+  - **username 规范化**：FeedList/LiveReplay 自动补 `@finder` 后缀（client.go:330-333, 350-353）。
+  - 缓存 key 格式 `channels:<endpoint>:<params>`，Ttl 5min/60min 两档。
+  - 超时：搜索 20s，其余 10s，reload 5s。
+
+**Python 翻写设计**：
+- 模块：`core/protocol/ws_client.py`（WS 连接+消息协议）+ `core/service/channels_api.py`（9+ 业务方法，对应 B10 门面的数据来源）。
+- 依赖：`websocket-client`（号匣已有，对齐 master pyproject）、B4 模型、B9 Cookie。
+- `class ChannelsClient`：
+  - `connect(ws_url)` / `disconnect()`；`on_message` 回调里按 `id` 匹配 pending chan。
+  - `request(endpoint: str, body: dict, timeout: float) -> dict`：对应 RequestFrontend——自增 id、发 `{"type":"api_call","data":{"id","key","data"}}`、等响应/超时（`asyncio.wait_for` 或 `queue.Queue` + 超时）。
+  - 9 个业务方法同名翻写（`search_contact`/`fetch_feed_list_of_contact`/`fetch_live_replay_list`/`fetch_live_profile`/`fetch_interactioned_feed_list`/`fetch_follow_list`/`fetch_play_history`/`fetch_feed_profile`/`fetch_feed_comment_list`/`fetch_feed_share_url`/`reload`），返回 B4 Pydantic 模型（`model_validate_json`）。
+  - 缓存：`functools.lru_cache` 或 dict + TTL（5min/60min 两档，key 与上游一致）。
+- `class WsConnectionManager`：连接生命周期、心跳（ping_interval=5s）、重连（与已讨论的熔断/重试策略联动）。
+
+**与现有代码接入点**：
+- `core/utils/weixin_client.py`（现有，微信客户端 exe 通信）与 `core/utils/socket_client.py`（现有）——B5 的 WS 通道**替代/并行**现有 exe 启停逻辑：视频号数据获取从"问 exe"改为"问页面 WS"。具体替换边界由 B10 门面定。
+- B3 的 `download_and_decrypt` 拿到的直链 URL + `DecodeKey` 来自 B5 的 feed_profile 响应（`ChannelsObject.ObjectDesc.Media[0]`）。
+
+**风险/决策点**：
+- **依赖浏览器登录态**：B5 必须有一个"已登录微信视频号的浏览器页面"开着（agent 注入）——**这是号匣客户端现有架构**（core/api/app.py 启 exe + 页面）。翻写保持同架构：Python 端只做 WS 转发，不自己发微信 HTTP（微信 API 签名/加密在页面 JS 里，无法 Python 复刻——**这是不翻写 HTTP 直连的原因，与 B6 逆向清单区分**）。
+- **超时语义**：上游 10s/20s 超时——翻写保留，超时视为接口失败（触发重试/熔断）。
+- **并发安全**：Go 用 map+chan+mutex；Python 用 `asyncio.Queue` + `dict[id]=Future`（或线程版 `queue.Queue`），注意 WS 消息回调线程与等待线程的解耦。
+- **缓存失效**：微信视频号数据 5min/60min 缓存——对齐已讨论的"低频按需缓存"策略。
+
+**验收细则**：
+1. 本地起 WS echo server（mock 页面），`request()` 发 api_call → 回包 id 匹配 → 返回 data；超时路径返回错误。
+2. `fetch_feed_profile("", "", url, "")` 对实测分享链接 → 返回 B4 `ChannelsFeedProfileResp` 模型（oid/nid 非空）。
+3. 9 个业务方法签名与上游一致（参数校验：keyword 非空、oid 非空、nid/comment_id 至少一个）。
+4. 缓存：同参数二次调用不触发 WS 发送（mock 计数）。
+5. 验证命令：`python -m unittest core.protocol.tests.test_ws_client` + `core.service.tests.test_channels_api`。
+
+**工作量**：2 个子块（WS 协议层 + 业务方法层），1-1.5 天。
+
+### B9 微信 Cookie 支撑——L3（执行级，2026-10-29 落档）
+
+**上游源码**：`pkg/cookies/cookies.go`（376 行，逐行读毕）+ `persistent.go`（157 行，逐行读毕）
+
+**上游逻辑（逐函数）**：
+- `Cookie` 结构（cookies.go:23-32）：name/value/domain/path/secure/httpOnly/sameSite/expires（-1=会话）。
+- `Jar`（cookies.go:91-221）：线程安全 cookie jar——`NewJar`/`SetCookies`/`Cookies`/`SetCookieFromHeader`/`SetCookieFromString`/`SetAllCookies`/`SaveToJSON`/`LoadFromJSON`/`LoadFromNetscape`。**注**：`SaveToFile`（Netscape 格式）实际只写注释占位（cookies.go:158-182 坑：cookiejar 无法枚举全部 cookie，主保存格式是 JSON）。
+- `ParseCookieHeader`/`ParseSetCookies`/`FormatCookieHeader`/`FormatSetCookie`/`ExtractFromResponse`（cookies.go:260-321）。
+- **持久化 Reader（persistent.go:23-126）——B5 直接依赖**：`NewPersistentReader(work_dir)` → 读 `<work_dir>/cookies.json`；`HeaderForDomain(domain)`（按域+过期过滤，persistent.go:34-59）；`HeaderForURL(raw_url)`（域+路径+secure+过期匹配，长 path 优先排序，persistent.go:64-107）。**每次调用重读文件**（新同步的 cookies.json 即时生效，persistent.go:61-63 注释）。
+- 域匹配规则（persistent.go:128-156）：`normalize_persistent_domain`（去首 `.` 小写）→ 子域匹配（cookie 域带 `.` 前缀 = 通配子域）；路径匹配（RFC 规则：`/foo` 匹配 `/foo/bar`）。
+- 错误：`ErrCookieNotFound`（persistent.go:19）。
+
+**Python 翻写设计**：
+- 模块：`core/security/cookie_jar.py`（Jar + 解析）+ `core/security/cookie_reader.py`（持久化 Reader）。
+- 依赖：Python 标准库（`http.cookiejar` 有 Netscape/JSON 支持但枚举受限——**直接用 stdlib `http.cookiejar.MozillaCookieJar`/`LWPCookieJar` 或自写 JSON 存储**；为对齐上游 JSON 格式（CDP/Chrome 风格字段），**自写 JSON 存取**更直接）。
+- `class PersistentCookieReader`：
+  - `__init__(work_dir)`；`header_for_domain(domain) -> str`；`header_for_url(url) -> str`（域/路径/secure/过期过滤 + 长 path 排序，逐行对齐 persistent.go）。
+  - **每次调用重读 `cookies.json`**（保持上游"新同步即时生效"语义）。
+- `class CookieJar`：parse/format 工具（ParseSetCookies/FormatCookieHeader/ExtractFromResponse）+ 线程安全读写。
+- 接入点：B5 `ChannelsClient` 构造传 `cookie_reader`；元宝 Cookie 由 B8 用 `header_for_domain(".tencent.com")`。
+
+**与现有代码接入点**：
+- 号匣现有 Cookie 来源（浏览器登录态）在 `core/utils/weixin_client.py`/前端注入——B9 提供**统一 Cookie 读取层**（cookies.json 落盘路径对齐号匣 work_dir）。
+
+**风险/决策点**：
+- **Cookie 过期**：微信 Cookie 有有效期——HeaderForDomain 已按 expires 过滤；过期=接口失败（触发重新登录流程，B10 处理）。
+- **JSON 格式**：上游字段是 CDP/Chrome 风格（httpOnly 驼峰）——Python 存储沿用同 schema，兼容上游导出文件。
+
+**验收细则**：
+1. `cookies.json`（含 .tencent.com 域 cookie）→ `header_for_domain(".tencent.com")` 返回正确 `name=value; name2=value2`。
+2. 过期 cookie 被过滤；域不匹配返回 ErrCookieNotFound 语义（空+异常）。
+3. `HeaderForURL`：https 请求过滤 secure=false 的 cookie、长 path 优先排序。
+4. 验证命令：`python -m unittest core.security.tests.test_cookie_reader`。
+
+**工作量**：1 个子块（~200 行），0.5-1 天。
 
 ### B8 元宝链接解析器——L3（v0.3 新增）
 - POST `yuanbao.tencent.com/api/weixin/get_parse_result`（yuanbao.go:108 实锤）。
