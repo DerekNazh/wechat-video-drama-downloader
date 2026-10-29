@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.11 B1-B5+B8+B9 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 + API 客户端 B5 + 元宝解析 B8 + Cookie 支撑 B9 全部落执行级；剩余 B6/B7/B10）
+> 状态：v0.12 B1-B6+B8+B9 执行级 · 2026-10-29（解密链/数据结构/API客户端/元宝/Cookie/接口清单全部落执行级；剩余 B7/B10）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -413,10 +413,61 @@ wx_channels_download（微信视频号域）
 - 号匣已有 server-secrets 管密钥 → 翻写为 `core/security/cookie_store.py`（结构化存取+持久化）。
 - 验收：能读/写 .tencent.com 域 cookie。
 
-### B6 JS 逆向接口清单——L3（仅参考，不实现注入）
-- interceptor.go 正则提取 20+ 接口签名（finderGetCommentList/finderUserPage/finderPcFlow/finderGetLiveInfo/finderPCSearch 等）。
-- 产出 `core/protocol/wxchannels_api_map.py`（接口清单+参数+响应形状）。
-- 验收：接口清单与红狐/TikHub 字段比对，找出未用字段。
+### B6 JS 逆向接口清单——L3（执行级，2026-10-29 落档）
+
+**上游源码**：`pkg/scraper/wxchannels/interceptor.go`（605 行，逐行读毕）
+
+**上游逻辑（逐函数）**：
+- 文件本质是 **MITM 响应改写插件**（echo 库，interceptor.go:73-605）——两个 plugin：
+  - plugin_1 `channels.weixin.qq.com`（interceptor.go:109-273）：改 HTML——注入 `__d_config`、timeless 库、`/inject/*.js` 脚本、按页面路径（home/feed/live/profile）注入对应 channels.*.js。
+  - plugin_2 `res.wx.qq.com`（interceptor.go:274-601）：改 JS——**用正则包装微信页面内的 finder* 接口函数，注入 `WXU.emit(...)` 事件**（这正是 B5 WS 桥的页面侧数据来源）。
+- **接口清单（正则实锤，页面 JS 暴露的全部接口函数）**：
+
+  | 接口函数（页面 JS） | 触发事件 | 对应 B5 key / 用途 |
+  |---|---|---|
+  | `finderInit` | channels:Init | 首页初始化 |
+  | `finderGetCommentDetail` | channels:OnFeedProfileLoaded | **feed_profile（feed 详情）** |
+  | `finderGetCommentList` | channels:FeedCommentListLoaded | **fetch_feed_comment_list（评论）** |
+  | `finderPcFlow` | channels:PCFlowLoaded | 关注流 |
+  | `getRecommendTabsFromService` | channels:RecommendFeedsLoaded | 推荐 tabs |
+  | `finderGetRecommend` | channels:RecommendFeedsLoaded | 推荐 feeds |
+  | `finderGetLiveInfo` | channels:OnLiveProfileLoaded | **live_profile（直播信息）** |
+  | `finderLiveUserPage` | channels:LiveUserFeedsLoaded | 直播用户页/回放列表 |
+  | `joinLive` | channels:JoinLive | **直播流地址（LiveCdnUrl，B4 JoinLivePayload）** |
+  | `finderUserPage` | channels:UserFeedsLoaded | **feed_list（作者作品列表）** |
+  | `finderPCSearch` / `finderSearch` | — | **contact_list（搜索）** |
+  | `finderGetFollowList` | — | **follow_list（关注列表）** |
+  | `finderGetPlayHistory` | — | **play_history（播放历史）** |
+  | `finderGetInteractionedFeedList` | channels:InteractionedFeedsLoaded | **interactioned_list** |
+  | `finderGetFeedH5Url` | channels:GetFeedH5Url | **feed_share_url（H5 链接）** |
+  | `loadLocalPlaylist` / goToPrevFlowFeed / goToNextFlowFeed | channels:HomeFeedChanged / GotoPrev/NextFeed | 流内切换（辅助） |
+  | `decodeBase64ToUint64String` / `createAdapterFromGlobalMapper` / `finderJoinLiveMapper` | channels:UtilsLoaded | 工具（B4 已翻写 base64 解码） |
+
+- **关键结论**：B5 的 9 个业务 key **全部能在页面 JS 中找到对应接口**——B6 确认"页面侧数据源完整覆盖"，B5 无需补接口；B6 真正价值是**字段级比对**（下方验收）。
+- **不翻写部分（明确）**：MITM 代理、证书、HTML/JS 改写注入、WXU 事件桥——号匣纯 API 零注入（已在弃用边界）。
+
+**Python 翻写设计**：
+- 产出：`core/protocol/wxchannels_api_map.py`——**静态清单模块**（接口名 → 参数形状 → 响应形状 → 对应 B5 key → 对应 B4 模型），注释标注 interceptor.go 行号。
+- 结构：`API_MAP = { "finderUserPage": {...}, ... }` + 两个函数：
+  - `find_unused_fields(provider_resp: dict) -> list[str]`：给定红狐/TikHub 响应，比对 B4 模型已覆盖字段，列出未用字段（"接口里很多数据没用上"的直接产出）。
+  - `api_coverage_report() -> dict`：输出"页面接口 ↔ B5 key ↔ B4 模型"覆盖矩阵。
+- **不实现注入/改写**：纯清单+比对，供 B10 门面参考。
+
+**与现有代码接入点**：
+- B5 `ChannelsClient` 的 9 个 key 与 B6 清单交叉验证（B5 已实现的方法是否覆盖页面全部接口）。
+- B10 门面按 B6 覆盖矩阵决定暴露哪些能力（如"直播流地址"是否要暴露）。
+
+**风险/决策点**：
+- **接口名会随微信前端更新变化**：interceptor.go 正则基于当前页面 JS 结构——清单标注"抓取日期 + 版本"（参考 B8 的 x-* 头版本风险，同属"上游变动需实测"）。
+- B6 仅参考不执行：**不写正则注入代码**（号匣无 MITM），清单维护在 B10 需要时再校验。
+
+**验收细则**：
+1. `api_coverage_report()`：输出矩阵含上表全部 15+ 接口，每个标注对应 B5 key / B4 模型 / 是否已用。
+2. `find_unused_fields`：用红狐/TikHub 实测响应样例 → 列出未入 B4 模型的字段（如粉丝数/关注数/作品数——对齐"作者维度数据抓全"讨论）。
+3. 验证命令：`python -m unittest core.protocol.tests.test_wxchannels_api_map`。
+4. **比对输出**：与红狐/TikHub 字段差异表（B10 联调时更新）。
+
+**工作量**：1 个子块（~150 行清单 + 比对逻辑），0.5-1 天。
 
 ### B10 业务适配门面——L4（v0.4 新增）
 - `internal/adapter/wxchannels/adapter.go`（12.8KB）+ **postprocess.go（98.3KB）**+ model.go（51.6KB）+ routes.go（12.8KB）。
