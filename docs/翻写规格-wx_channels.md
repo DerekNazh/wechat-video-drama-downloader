@@ -669,6 +669,7 @@ wx_channels_download（微信视频号域）
 > **状态**：v0.20 二期框架 + 代理方案落档（2026-10-29）。范围=**微信小程序短剧嗅探**（仅 qq.com 插件微信域，不做任意平台/DefaultPlugin 兜底/QQ音乐/m3u8/直播）。
 > **v0.21 柠檬后台前端 UI 改造规格落档（2026-10-29 用户拍板，§6.12）**：令牌必改 + 布局结构不动 + 文案必改 + 图案 AI 生图（资产放公司知识库）。对齐暗宇宙设计系统（暗色优先、品牌紫 `#6d5cff`、深空底 `#07070b`、描边分层、数字等宽、去模板味）。先写规格后开工——待执行顺序 ①令牌 ②外壳 ③文案 ④图案 ⑤细节走查。
 > **v0.22 柠檬后台模板产品化改造清单落档（2026-10-29，§6.13）**：除前端外实扫全仓另确认 6 层改造（品牌可见/FastAPI 文档/SDK 示例/部署运维/合规/安全/清理）；**模板无 LICENSE=合规硬闸**（待用户提供模板来源）；内部标识符层决策=暂不改（550+ 处重命名零用户收益，产品定名后评估）；顺手修复 §6.10 标题行丢失（v0.21 编辑误删，已补回）。
+> **v0.23 产品定名+标识符迁移降级（2026-10-29 AI 按用户授权拍板）**：卡密系统定名=**卡密后台**（中文）/ **kami-admin**（英文代号，SDK 类名 KamiSDK）；§6.13④ 标识符层从"暂不改"降级为"机械化替换可顺手做"（lemon_kami→kami / LEMON_→KAMI_），DB 改名留迁移独立排期；§6.12 文案落点品牌字样=卡密后台。
 > 决策链：①用户明确"只想搜微信视频号/微信小程序里的短剧"→ 范围收窄为 qq.com 微信域；②代理三选一拍板：**CA（Current User Root）+ 微信手动代理 127.0.0.1:2023 + mitmproxy 统一管理**——系统代理全程不碰（用户亲历系统代理"老不好用"）；③CA 安装实测（2026-10-29）：`certutil -user -addstore` / `Import-Certificate` / `.NET X509Store` 三种方式全部会弹一次确认框（Import-Certificate 直接报"此操作中不允许使用 UI"）——**Windows 对 Root 存储有安全保护，零弹窗做不到**；行业标准（Fiddler/Charles/mitmproxy）均为首次弹一次。④因此 CA 安装 = **检测先行、有则跳过、无则弹一次、幂等**；⑤语言 Python + 基座 mitmproxy（比逐行翻 proxy.go 省力）。
 
 ### 6.1 上游机制（research/res-downloader 源码实锤）
@@ -953,22 +954,23 @@ wx_channels_download（微信视频号域）
 ### 6.13 柠檬后台模板产品化改造清单（2026-10-29 落档，实扫全量）
 
 > **背景**：lemon-kami-git 为模板（「小柠檬网络验证 · Lemon Kami」，卡密/授权验证 SaaS：多租户 AppID/AppSecret + SDK + 积分 + 发卡 + 更新清单 + 未来错误上报）。用户确认改造成公司自有产品，除前端 UI（§6.12）外，实扫全仓（品牌标识符残留 1000+ 处）确认还有 6 层改造项，全量盘点如下。**待办=用户需提供模板来源（许可证决定 ③ 能否走）**。
+> **产品定名（2026-10-29 AI 按用户授权拍板：功能直白+「后台」后缀）**：中文正式名=**卡密后台**；英文代号=**kami-admin**（沿用 kami 词根与现有 `lemon_kami` 平滑迁移：包名 `lemon_kami→kami`、SDK 类名 `LemonKamiSDK→KamiSDK`、localStorage `lemon_device_id→kami_device_id`；中文名通用词无商标风险）；替代 §6.12/§6.13 所有「产品定名后改」悬空项。备选（用户可否决）=「授权后台」/「发卡后台」。
 
-**① 用户可见品牌层（必须改，含 §6.12 前端）**：
+**① 用户可见品牌层（必须改，含 §6.12 前端；品牌名=卡密后台/kami-admin，v0.23 定名）**：
 
 | 落点 | 现状实锤 | 处理 |
 |---|---|---|
-| 前端 UI | — | §6.12 按规格走 |
-| FastAPI API 文档 | `title="Lemon Kami API"`、`description="小柠檬网络验证 - 多租户卡密分发与验证平台"`（main.py） | 改公司品牌名 |
-| README | 标题「小柠檬网络验证 · Lemon Kami」 | 重写品牌 |
-| SDK 示例页 | `web/public/sdk/js_example.html`「Lemon Kami JS SDK 示例」（对外可见） | 随产品定名改 |
+| 前端 UI | — | §6.12 按规格走（品牌字样=卡密后台） |
+| FastAPI API 文档 | `title="Lemon Kami API"`、`description="小柠檬网络验证 - 多租户卡密分发与验证平台"`（main.py） | `title="Kami Admin API"`、description=卡密后台-多租户卡密分发与验证平台 |
+| README | 标题「小柠檬网络验证 · Lemon Kami」 | 重写为「卡密后台 · Kami Admin」 |
+| SDK 示例页 | `web/public/sdk/js_example.html`「Lemon Kami JS SDK 示例」（对外可见） | 卡密后台 JS SDK 示例，类名 `KamiSDK` |
 | docs/ 全目录 | AUDIT/OSS 等 10 篇文档带 lemon 品牌 | 品牌替换 |
 
 **② 部署/运维可见层（产品定名后改）**：systemd 服务名+用户 `lemon-kami`、nginx upstream `lemon_kami_backend`、`deploy/install.sh`（49 处）、docker-compose（21 处）、pyproject（27 处）。
 
 **③ 合规层（发版前硬闸，⚠️ 最大缺口）**：**模板无 LICENSE 文件**——模板来源许可证不明（开源/付费模板？能否商用+改名？），与 §6.8 同构：换皮商用前必须取得可商用授权，拿不到不得改名商用。**行动=用户提供模板来源，或溯源查证**。配套 THIRD-PARTY-NOTICES + 用户协议/隐私（复用 §6.8⑥ 机制）。
 
-**④ 内部标识符层（决策=暂不改，行业惯例留痕）**：`src/lemon_kami` 包名、`LEMON_*` 环境变量（config.py 70 处 + .env 三份 100+ 处）、SDK 类名 `LemonKamiSDK`、localStorage `lemon_device_id`、数据库 `lemon_kami_dev`、mypy-baseline 550 行。**理由**：用户不可见+无品牌混淆，全改=550+ 处重命名+DB 迁移大工程零用户收益；产品定名后统一评估一次。对外 SDK 类名随产品定名改（对外可见）。
+**④ 内部标识符层（决策=定名已出，迁移评估降级为可低成本执行）**：`src/lemon_kami` 包名、`LEMON_*` 环境变量（config.py 70 处 + .env 三份 100+ 处）、SDK 类名 `LemonKamiSDK`、localStorage `lemon_device_id`、数据库 `lemon_kami_dev`、mypy-baseline 550 行。**原决策=暂不改（550+ 处重命名+DB 迁移零用户收益）**；v0.23 定名 `kami-admin` 后评估=包名/SDK 类名/环境变量前缀 `lemon_kami→kami` / `LEMON_→KAMI_` 属**机械化替换**（无逻辑改动，靠全局替换+重跑测试+mypy baseline 再生成），可在 §6.13 执行期顺手做；DB 名 `lemon_kami_dev` 变更=迁移项（生产库改名需停机窗口，独立排期）。**对外 SDK 类名 `LemonKamiSDK→KamiSDK` 随 ① 品牌层一并改（对外可见）**。
 
 **⑤ 安全配置治理（执行项）**：生产密钥已走 systemd EnvironmentFile 不提交（达标）；`docs/OSS_CREDENTIALS_SETUP_2026-09-30.md` 疑似含 OSS 凭据配置——**核查是否泄露真实 AK**；生产配置对齐 server-secrets 公司纪律。
 
