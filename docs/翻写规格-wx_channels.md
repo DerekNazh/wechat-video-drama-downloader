@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → 号匣/legacy 自研（微信视频号域）
 
-> 状态：v0.3 完整架子 · 2026-10-29（v0.2 依赖重排后，全量源码缺漏审查补齐）
+> 状态：v0.4 二次缺漏审查 · 2026-10-29（v0.3 后补查 download_task 依赖链，发现 adapter/wxchannels 业务适配层为真实缺漏）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），供 legacy 分支自研版使用。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -9,7 +9,7 @@
 
 ## 〇、全量源码盘点（微信视频号域，缺漏审查完成）
 
-**审查方法**：wxchannels 包全部 .go + internal/services + internal/api + internal/interceptor + pkg/{cookies,cache} + frontend/inject 逐目录列全，对照功能域归类。**遗漏修正**：v0.1/0.2 漏了 ①yuanbao.go（独立链接解析器）②证书模块 ③cookies/cache 支撑包 ④下载任务 WS 进度推送 ⑤scraper_job 批量抓取 ⑥content/data_query 内容查询服务。
+**审查方法**：wxchannels 包全部 .go + internal/services + internal/api + internal/interceptor + pkg/{cookies,cache} + frontend/inject 逐目录列全，对照功能域归类。**遗漏修正**：v0.1/0.2 漏了 ①yuanbao.go（独立链接解析器）②证书模块 ③cookies/cache 支撑包 ④下载任务 WS 进度推送 ⑤scraper_job 批量抓取 ⑥content/data_query 内容查询服务。**v0.3 后二次审查**：补查 download_task 依赖链（adapter/events/hermes/database-model），发现 **internal/adapter/wxchannels 业务适配层（postprocess.go 98.3KB 为全仓最大单文件之一）** 未纳入——这是 B5 能力的对外门面，必须补。
 
 ### 模块树（翻写/参考/弃用 三态）
 
@@ -23,8 +23,10 @@ wx_channels_download（微信视频号域）
 │   └── B4 数据结构/常量              types.go+util.go  30.7KB  L0 无依赖
 ├── 【翻写】客户端（直连协议）
 │   └── B5 API 客户端                 client.go         15.1KB  L3 依赖B4+cookies
+├── 【翻写】业务适配层（v0.4 新增）
+│   └── B10 业务适配门面               adapter/wxchannels/* (adapter+postprocess 110KB+)  L4 依赖B3+B5
 ├── 【翻写】链接解析
-│   └── B8 元宝链接解析器             yuanbao.go         (新增!) 独立  L3
+│   └── B8 元宝链接解析器             yuanbao.go         独立  L3
 ├── 【参考】协议与逆向
 │   ├── B6 JS 逆向解析器              interceptor.go    24.6KB  独立  (只产接口清单)
 │   └── B9 微信侧 Cookie 支撑         pkg/cookies/*      14.9KB  支撑B5
@@ -38,7 +40,9 @@ wx_channels_download（微信视频号域）
 ├── 【评估】内容与任务服务
 │   ├── (评) content.go + data_query.go  内容查询/展示    81KB  与号匣DB重叠，评估复用字段
 │   ├── (评) scraper_job.go             批量抓取任务      33KB  号匣"批量添加作者"可比对
-│   └── (评) cache.go + provider.go     缓存             8.4KB  号匣缓存设计已定，仅对照
+│   ├── (评) cache.go + provider.go     缓存             8.4KB  号匣缓存设计已定，仅对照
+│   ├── (评) events.go + hermes/*        事件总线/下载引擎  通用支撑层，号匣已有等价物（事件系统/任务引擎），不翻写
+│   └── (评) database/model/*             DB 模型          号匣已有自研 DB 表，仅对照字段
 ```
 
 ---
@@ -55,7 +59,8 @@ wx_channels_download（微信视频号域）
 | 6 | L3 | **B8** | 元宝链接解析器 | yuanbao.go | 独立 | P1 |
 | 7 | L3 | **B9** | 微信 Cookie 支撑 | pkg/cookies/* | 独立 | P1 |
 | 8 | L3 | **B6** | JS 逆向接口清单 | interceptor.go | 独立 | P2 |
-| 9 | L4 | **B7** | 下载任务状态机 | download_task*.go+handler | B3 | P2 |
+| 9 | L4 | **B10** | 业务适配门面 | adapter/wxchannels/*（110KB+） | B3+B5 | P1 |
+| 10 | L4 | **B7** | 下载任务状态机 | download_task*.go+handler | B3 | P2 |
 
 ## 二、各块要点
 
@@ -97,6 +102,12 @@ wx_channels_download（微信视频号域）
 - 产出 `core/protocol/wxchannels_api_map.py`（接口清单+参数+响应形状）。
 - 验收：接口清单与红狐/TikHub 字段比对，找出未用字段。
 
+### B10 业务适配门面——L4（v0.4 新增）
+- `internal/adapter/wxchannels/adapter.go`（12.8KB）+ **postprocess.go（98.3KB）**+ model.go（51.6KB）+ routes.go（12.8KB）。
+- **作用**：B5 客户端方法（SearchChannelsContact/FetchChannelsFeedListOfContact/FetchChannelsLiveReplayList/FetchChannelsFeedProfile/FetchChannelsFeedCommentList/FetchChannelsFeedShareUrl）的业务封装 + **响应后处理（postprocess）**——把微信原始响应清洗/裁剪/重组成对外统一模型，是全仓最大单文件之一。
+- **产出**：`core/api/wxchannels_service.py`（业务门面：统一方法 + 响应后处理管道）。
+- **验收**：与红狐/TikHub 同场景输出字段可比对一致；含全部 6 个对外方法。
+
 ### B7 下载任务状态机——L4
 - download_task.go（115.9KB）+ handler_download_task.go（60.4KB）+ **handler_download_task_ws.go（26.4KB，进度推送）**+ download_task_delete/view.go。
 - **不整块翻**：号匣已有 YZPQ-307 状态机设计 → 差异比对补缺口（含 WS 进度推送是否纳入号匣）。
@@ -129,5 +140,6 @@ wx_channels_download（微信视频号域）
 - [ ] **B5** API 客户端（依赖 B4+B9）
 - [ ] **B8** 元宝解析器（独立）
 - [ ] **B6** JS 逆向接口清单（独立）
+- [ ] **B10** 业务适配门面（依赖 B3+B5）
 - [ ] **B7** 状态机差异比对（依赖 B3）
-- [ ] 评估项：content/data_query、scraper_job、cache 对照（不阻塞，深入时再看）
+- [ ] 评估项：content/data_query、scraper_job、cache、events/hermes、database-model 对照（不阻塞，深入时再看）
