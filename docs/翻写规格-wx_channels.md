@@ -837,7 +837,7 @@ wx_channels_download（微信视频号域）
 - [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
 - [ ] S2 **mitmproxy 基座接入**（2026-10-29 决策：**单端口 2023 收敛**——视频号 B11 与短剧嗅探共用同一 mitmdump 实例，不做 8899→2023→2022 多端口转发；形态=mitmdump CLI 子进程+脚本 `-s core/sniff/mitm_scripts/wechat_sniff.py`，与 res_download_service.py 管理模式同构（端口清理/就绪探测/自愈复用）；白名单域 MITM（res.wx.qq.com/qq.com/finder.video.qq.com/channels.weixin.qq.com）、其余透明透传不碰；CA=mitmproxy 自带 confdir 固定（%APPDATA%\doubao-downloader\mitmproxy\），CA 永不更换，S1 装该 CA；脚本 HTTP 回调主应用 /api/v1/sniff/resources；`--set web_port 0` 关 web 界面；**打包风险**：pyinstaller 需 hidden-imports，验收含打包冒烟）
 - [ ] S3 **微信 Preferences 程序化注入/清除**（A-v2，proxy_manager.py：闭环状态机 IDLE→INJECTING→ACTIVE→CLEARING+自愈，多 profile 遍历+写回校验+备份还原；**格式已实测锁定「127.0.0.1:2023」无 scheme**，真机联调时验证一次 注入→开小程序→流量进入→清除 即可）
-- [ ] S4 注入模块（inject.py，qqMediaRegex 逻辑翻写）
+- [ ] S4 **注入模块**（2026-10-29 执行级落档：`core/sniff/inject.py` 纯函数 `inject_qq_js(js_text, version)`+`refresh_js_version()`，两个正则钩子对齐上游 qqMediaRegex(`get\s*media\(\)\{`→劫持 getter fetch 上报 type=1)/qqCommentRegex(`async\s*finderGetCommentDetail\((\w+)\)\s*\{return(.*?)\s*}\s*async`→包层上报 type=2)；版本刷新 `.js"`→`.js?v=<产品版本>` 是行业 cache busting 标准做法(MDN/华为认证，上游源码+微信 URL 侧实锤)；mitmproxy response hook 只处理 200/206 + res.wx.qq.com virtual_svg-icons-register.publish 路径，channels.weixin.qq.com feed/home 做版本刷新；`flow.response.text` 自动重算长度；正则不跨行对齐 Go 行为；**前置依赖=明天实测确认小程序短剧加载该 JS，否则换注入路径**；验收=纯单测+本地假服务器冒烟）
 - [ ] S5 上报拦截 + 直链解析（wechat.py，handleWechatRequest/handleMedia 翻写）
 - [ ] S6 与一期 B1/B3/B5 联调（decodeKey 解密链 + WS 下发）
 - [ ] S7 替换 res_download.exe（res_download_service.py 保姆代码退役）
