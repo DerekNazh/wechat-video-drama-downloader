@@ -145,13 +145,13 @@ wx_channels_download（微信视频号域）
   - `toDecrypt = min(n, limit-consumed)`（reader.go:56-59）；逐字节 `p[i] ^= ks[ksPos]`，`ksPos>=8` 时重新 `ISAacRandom()` 装块（reader.go:63-68）；`consumed += toDecrypt`（reader.go:71）。
   - **注意**：只解密前 encLimit 字节，超出透传——视频文件 128KB 后原样输出。
 
-**Python 翻写设计**：
-- 模块：`core/decrypt/decrypt_reader.py`。
-- 类：`class DecryptReader`，构造 `DecryptReader(source: BinaryIO, key: int, offset: int = 0, limit: int = 0)`。
-  - 内部持有 `RandCtx64`（来自 B1）、`_ks: bytes`（8 字节）、`_ks_pos: int`、`_consumed: int`。
-  - `read(n: int) -> bytes`：对应上游 `Read`——从 source 读 n，仅 `[0, limit)` 区间做 XOR，`& 0xFFFFFFFFFFFFFFFF` 掩码（B1 MASK 复用）。
-  - `__iter__` / `__enter__` 便捷接口（供 httpx 流式管道使用）。
-- 复用 B1 的 `RandCtx64`；**不要在 decrypt_reader 里重复实现 ISAAC**（依赖 B1）。
+**Python 翻写设计（代码级，2026-10-29 用户确认接口形态：类 + read(n)）**：
+- 模块：`core/decrypt/decrypt_reader.py`；类：`DecryptReader(source: BinaryIO, key: int, offset: int = 0, limit: int = 0)`，方法 `read(n: int = -1) -> bytes`。
+- 内部字段：`_source`（底层流）、`_ctx`（B1 RandCtx64，**不重复实现 ISAAC**）、`_limit`（加密区长度，0=全透传）、`_consumed`（已消费）、`_ks`（当前 8 字节块）、`_ks_pos`（块内偏移，8=已用完）、`_offset`。
+- `_skip_to(offset)` 初始化快进：`limit==0` 直接返回（全透传）；`offset>=limit` 置 `consumed=limit`（整个跳过不解密）；否则 `consumed=offset`，**逐块循环** `ctx.random()` 跳过 `offset//8` 块（keystream 必须连续生成，不能乘算跳），`struct.pack(">Q", rand & MASK)` 装当前块，`ks_pos = offset % 8`。
+- `read(n)`：`data = _source.read(n)` → 空则返回 `b""`；`limit==0 or consumed>=limit` 原样透传；`to_decrypt = min(len(data), limit - consumed)` 逐字节 `out[i] ^= ks[ks_pos]`（`ks_pos>=8` 时 `ctx.random()` 重装块）；`consumed += to_decrypt`。
+- 断点续传用法：`httpx.stream("GET", url, headers={"Range": f"bytes={pos}-"})` + `DecryptReader(stream, key, offset=pos, limit=131072)` + `open(dest, "ab")` 追加写 → 续传部分从 pos 处解，拼接正确（`shutil.copyfileobj(reader, f)` 即可，因 read(-1) 读到 EOF）。
+- 生成器版 `iter_decrypt(stream, key, offset, limit)`：按需再补（用户确认类形态优先，文件落盘更通用）。
 
 **与现有代码接入点**：
 - B1 的 `scripts_probe_python_decrypt.py` 目前是"整体读入+解密"（generate_keystream 一次性 128KB）——B2 把它升级为"边读边解"，是 `core/decrypt/decrypt_reader.py` 的雏形，不新增外部依赖。
@@ -166,7 +166,7 @@ wx_channels_download（微信视频号域）
 3. 未加密区透传：加密文件第 131072 字节之后内容原样保留。
 4. 验证命令：`python -m unittest core.decrypt.tests.test_decrypt_reader`（含 4 条断言）。
 
-**工作量**：1 个子块（~150 行 + 单测），0.5-1 天。
+**工作量**：1 个子块（~90 行实现 + ~60 行单测），0.5-1 天。
 
 ### B3 解密服务——L2（执行级，2026-10-29 落档）
 
