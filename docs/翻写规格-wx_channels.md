@@ -667,6 +667,7 @@ wx_channels_download（微信视频号域）
 ## 六、二期：短剧嗅探翻写（res-downloader → Python，2026-10-29 拍板）
 
 > **状态**：v0.20 二期框架 + 代理方案落档（2026-10-29）。范围=**微信小程序短剧嗅探**（仅 qq.com 插件微信域，不做任意平台/DefaultPlugin 兜底/QQ音乐/m3u8/直播）。
+> **v0.21 柠檬后台前端 UI 改造规格落档（2026-10-29 用户拍板，§6.12）**：令牌必改 + 布局结构不动 + 文案必改 + 图案 AI 生图（资产放公司知识库）。对齐暗宇宙设计系统（暗色优先、品牌紫 `#6d5cff`、深空底 `#07070b`、描边分层、数字等宽、去模板味）。先写规格后开工——待执行顺序 ①令牌 ②外壳 ③文案 ④图案 ⑤细节走查。
 > 决策链：①用户明确"只想搜微信视频号/微信小程序里的短剧"→ 范围收窄为 qq.com 微信域；②代理三选一拍板：**CA（Current User Root）+ 微信手动代理 127.0.0.1:2023 + mitmproxy 统一管理**——系统代理全程不碰（用户亲历系统代理"老不好用"）；③CA 安装实测（2026-10-29）：`certutil -user -addstore` / `Import-Certificate` / `.NET X509Store` 三种方式全部会弹一次确认框（Import-Certificate 直接报"此操作中不允许使用 UI"）——**Windows 对 Root 存储有安全保护，零弹窗做不到**；行业标准（Fiddler/Charles/mitmproxy）均为首次弹一次。④因此 CA 安装 = **检测先行、有则跳过、无则弹一次、幂等**；⑤语言 Python + 基座 mitmproxy（比逐行翻 proxy.go 省力）。
 
 ### 6.1 上游机制（research/res-downloader 源码实锤）
@@ -882,7 +883,73 @@ wx_channels_download（微信视频号域）
 > **错误上报（2026-10-29 最终拍板=方案2 统一收口柠檬后台）**：决策依据=①手动反馈非行业主流且覆盖率极低（用户懒是事实）②分散通道(飞书/微信/邮箱)=日志满天飞、维护乱、无法按版本统计→**统一收口优于满天飞**（行业=Sentry/App Center 单点收集）③复用柠檬后台=非"建独立系统"（已是统一后端：卡密+更新清单），仅加一个收包端点。**形态**：客户端崩溃→自动打包日志(静默采集)→弹窗问一次"是否发送"[发送/不发送]（设置页可设"总是发送"后静默，opt-in 行业标准）→POST `adminlm.hubapi.work/errors/{app_id}`；柠檬后台加 `POST /errors/{app_id}` 收包端点（复用 FastAPI+updates.py 限流模式，≤1MB+IP限流）→存 OSS logs/{产品}/{版本}/日期/.zip；**审查端=不建面板**：发布观察窗（§6.11⑥）看 OSS 清单→下载看堆栈→重大崩转 PingCode，量大了再升级列表/聚合不上 Sentry；AK 永不落客户端；数据=版本/OS/堆栈/日志尾部（正则清洗 URL/文件名，无用户内容）；飞书表格/群旧方案退为人工兜底；隐私说明披露（§6.8⑥）。
 > **错误上报实现规格（2026-10-29 源码实锤细化，lemon-kami-git 为蓝本）**：柠檬后台 4 处改动=①`services/error_report_service.py`新增（zip 魔数 PK\x03\x04 校验+≤1MB+存 S3 兼容仓库 logs/{app_id}/{version}/{ts}-{rand}.zip，复用 config.py:175 现成 boto3 S3 抽象）②`routes/errors.py`新增（POST /errors/{app_id} multipart 收 file+version+platform，enforce_ip_limit，翻译层风格照 updates.py）③`rate_limit.py`加 BUCKET_ERROR="error"（独立桶，错误上报=低频突发与 update 高频启动检查分开，源码既有原则）④main.py 挂载。接口=200{ok}/400 校验失败/413 过大/429 限流。客户端=新增 `core/error_report.py`（sys/threading/asyncio 三路 excepthook→crash_handler：report.json=product/version单一源/os/python/error_type/traceback+日志尾部→正则清洗 URL/文件名/手机号/微信号样→zip）+gui.py 注册钩子+**崩溃弹窗=原生 Windows MessageBoxW（ctypes，不依赖 WebView2 存活，Sentry/App Center 同款机制）**+**设置页"崩溃报告"三态开关（每次询问/总是发送/关闭，默认询问，js_api 桥 set_crash_report_mode 写本地配置，Firefox/Ansel 同款）**+requests POST，失败静默不重试。审查=发布观察窗看 S3 桶对象清单下载 zip，重大崩转 PingCode。
 
-### 6.10 上游跟踪机制（2026-10-29 落档）
+### 6.12 柠檬后台前端 UI 改造（2026-10-29 立项拍板，对齐暗宇宙设计系统）
+
+> **目标**：柠檬后台前端（`D:\setup_temp\lemon-kami-git\web\`，Vue3 + Element Plus 2.13 + Vite + Pinia）从"小柠檬网络验证"风格整体切换到**暗宇宙设计系统**风格（公司主题）。用户拍板范围=**令牌必改 + 布局结构不动 + 文案必改 + 图案必改（AI 生图符合公司文化，资产放公司知识库）**。
+> **现状实锤（与设计系统矛盾点）**：`theme.css` 主色 `#2f80ed`（小柠檬蓝）、亮色优先（theme.js 默认 `isDark:false`）、冰蓝渐变底 `#eaf6ff`、全屏加载弹跳柠檬 emoji `\1F34A`（模板味）、登录页吉祥物柠檬（login-mascot）、"Lemon Kami"/"小柠檬网络验证"字样、clickBurst 点击爆裂特效。公司系统=暗色优先、品牌紫 `#6d5cff`、深空底 `#07070b`、描边分层（面=填充+1px 描边，阴影只给浮层）、数字等宽、去模板味。
+> **数据正本**：一切数值以 `D:\暗宇宙\knowledge\content\design\设计系统-暗宇宙.md` + `tokens/` DTCG JSON 为准（md 与 JSON 不一致改 md）；改任何颜色 MUST 重跑对比度表（§2.1.4 口径：暗色正文链接 MUST 用 `#acb1ff`、主按钮 MUST 白字、accent 不作实心按钮底）。
+
+#### 6.12.1 令牌层改造（阶段 A，核心，theme.css 重写 + theme.js 默认暗色）
+
+**Element Plus 2.13 全量 CSS 变量覆盖**（零构建改动，单文件全局生效）：
+
+| 主题面 | 暗色（默认） | 亮色（切换保留） | 对应语义令牌 |
+|---|---|---|---|
+| 页面底 | `#07070b` | `#ffffff` | background.base |
+| 下沉/表头 | `#040407` | `#f2f2f7` | background.sunken |
+| 卡片/面板 | `#0c0c14` | `#ffffff` | background.surface |
+| 浮层/弹窗 | `#191926` | `#ffffff` | background.raised |
+| hover 填充 | `#1e1e2d` | `#f2f2f7` | background.hover |
+| 选中/按下 | `#252533` | `#e2e2ec` | background.active |
+| 模态遮罩 | `rgba(3,3,4,0.72)` | `rgba(7,7,11,0.48)` | background.overlay |
+| 主色 `--el-color-primary` | `#6d5cff` | `#5a47e5` | brand.primary |
+| 主色 dark-2（hover） | `#5a47e5` | `#5335dd` | brand.primary-hover |
+| 主色 light-3/5/7/8/9 | `#acb1ff/#caceff/#e2e4fe/#eff1fe/#ffffff` | `#e2e4fe/#caceff/#acb1ff/#6d5cff/#ffffff` | brand 阶派生 |
+| 强调色 | `#22d3ee` | `#0e7490` | brand.accent（图标/链接/选中，不作按钮底） |
+| 正文 | `#f2f2f7` | `#07070b` | text.primary |
+| 次级文本 | `#b6b6cc` | `#3d3d50` | text.secondary |
+| 三级/占位 | `#8a8aa6` | `#5a5a72` | text.tertiary |
+| 禁用 | `#5a5a72` | `#8a8aa6` | text.disabled |
+| 链接 | `#acb1ff` | `#5335dd` | text.link（暗色正文链接 MUST 用它，主色 4.43 不达标） |
+| 成功/警告/危险 | `#34d399/#fbbf24/#f87171` | `#047857/#9a5205/#b91c1c` | status.* |
+| 徽章底 | 各色 `rgba(...,0.14)` | 各色 `rgba(...,0.10)` | status.*-soft |
+| 卡片描边 | `#2e2e3e` | `#d9d9e6` | border.default |
+| 控件边框 | `#6b6b85` | `#8a8aa6` | border.control（≥3:1） |
+| 焦点环 | `#6d5cff` 2px | `#5a47e5` 2px | border.focus |
+
+**按钮/组件纪律**：主按钮=品牌紫平涂 `#6d5cff` + **白字 `#ffffff`**（4.54:1 达标；深字 4.43 不达标 MUST NOT）；禁按钮渐变（品牌渐变 `#6d5cff→#5a47e5` 仅氛围层）；破坏性按钮=`#f87171` 底+深字 `#07070b`；次要按钮=`#252533` 底+`#2e2e3e` 描边+`#f2f2f7` 字。
+
+**字体/圆角/间距**：font-family=设计系统 sans 栈（禁联网 Web 字体）；`--el-border-radius-base: 8px`（md），卡片 lg=12px、弹窗 xl=16px；间距走 8px 栅格（8/16/24/32/48/64）。
+
+**theme.js**：默认 `isDark: true`（公司纪律=暗色优先），亮色切换开关保留（老客服/运营习惯）；localStorage 键不变。
+
+**去模板味（必做）**：删柠檬弹跳 loading emoji `\1F34A`；删 clickBurst 点击爆裂特效或换品牌化低调反馈；登录页柠檬吉祥物（login-mascot）随图案改造替换。
+
+#### 6.12.2 布局外壳（阶段 B，MainLayout.vue + Login.vue + index.html）
+
+- **MainLayout.vue**：结构不动，只换样式——侧边栏/顶栏配色暗宇宙、选中态品牌紫、Logo 区"Lemon Kami"字样删（换公司品牌名/Logo）；`shellTitle` 改公司品牌文案。
+- **Login.vue**：深空底 + 品牌渐变氛围层（小面积，符合"渐变仅氛围层"纪律）+ 主色 CTA；长介绍文案（"小柠檬网络验证围绕…"）按 6.12.3 改。
+- **index.html**：`<title>` 改公司品牌名 + favicon 换 AI 生图。
+
+#### 6.12.3 文案改造（品牌语言对齐）
+
+落点=①index.html title ②MainLayout 的 shellTitle/"Lemon Kami" ③Login.vue 标题/副标题/欢迎语/长介绍 ④空状态/兜底话术。原则=**内部工具以清晰为准，品牌元素（Logo/标题/欢迎语/页脚）对齐公司语言**；文案最终稿由 AI 起草 → 用户过目（品牌调性属用户独有信息，不自行拍死）。
+
+#### 6.12.4 图案改造（AI 生图 + 知识库落盘）
+
+- **产出**：品牌 Logo（替换 brand-logo.png）、favicon、登录页背景装饰（深空/星夜/品牌紫光视觉，符合公司文化）。
+- **工具**：doubao-creative-design skill 生图 → 本地落盘 `web/static/` → **资产同步进公司知识库**（obsidian-kb 通道，路径先查 INDEX；如 design/brand-assets/）。
+- **替换点**：`web/static/brand-logo.png`、index.html favicon、Login.vue 的 login-brand__logo + login-mascot、MainLayout logo__img。
+
+#### 6.12.5 执行顺序与验收
+
+**顺序**：①令牌（theme.css+theme.js）→ ②外壳（MainLayout/Login/index.html）→ ③文案 → ④图案（AI 生图+替换）→ ⑤细节走查。每步独立可验收（本地 `vite dev` 预览 + `vite build` 无错）。
+
+**验收清单（对应设计系统纪律）**：改任何颜色 MUST 重跑对比度表（§2.1.4 口径全过）；纯数字展示（金额/卡密/积分/ID/统计）MUST `font-variant-numeric: tabular-nums` + mono 栈；每页一个主 CTA；强调色面积 ≤1/3；暗色正文链接用 `#acb1ff`；最小字号 12px；无小柠檬残留（蓝/冰蓝渐变/柠檬 emoji/吉祥物/"Lemon Kami"字样）。
+
+**待确认项（执行时向用户确认，不自行拍板）**：①公司现成 Logo 资源（有则直接用，无则 AI 生图占位）；②文案终稿用户过目；③默认暗色=公司纪律直接定，但亮色切换保留（用户未否决）。
+
+
 
 > **为什么必须有**：两上游持续更新（res-downloader 插件生态活跃、微信季度级发版），翻写版="功能等价"实现——上游修 bug/适配微信新版本我们不知道=悄悄落后；微信升级黑盒不通知，会直接打断 A-v2 注入与下载链路。
 > **①固定基线+差异映射表**（核心）：`docs/上游跟踪.md` 记录=两上游 repo URL / 我们 pin 的 commit / 上游最新 commit / 差异状态(同步|落后|有意分叉) / 模块级映射（core/decrypt ↔ upstream/decrypt.go）。**上游新代码不自动合并**（照抄违规），只做"变更信号"。
