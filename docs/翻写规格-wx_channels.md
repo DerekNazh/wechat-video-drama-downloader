@@ -1,6 +1,7 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
 > 状态：**v0.18 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥；v0.16 投放方式改进程级代理；v0.17 定主方案=WebView2 单实例代理；v0.18 最小测试 PASS 落档——单实例 --proxy-server 实测可行 22 条请求全走代理/系统代理未动，微信代理独立性查证：上游依赖微信'使用系统代理'设置，本方案独立不受微信配置影响，理论 100% 确认）**
+> **v0.19 全局语言/排期决策（2026-10-29 用户拍板）**：①全仓 Python 单语言——产品代码永远 Python，Go 只留 research/ 当参考源，禁止双栈（用户明确否决"全仓 Go"与"Go域+HTTP混合"：前者需重写几十万行现有 Python 产品=天价，后者永久双运行时/进程管理/双打包）；②短剧（res-downloader，Apache 2.0 可商用）**二期翻写**（理由：黑盒系统代理体验差，翻写=拔系统代理+纯 Python 集成；基座用 mitmproxy 比逐行翻 proxy.go 省力）——短剧源码已 clone 到 research/res-downloader/（core/ 2847 行 Go，23 文件，plugins 仅 default+qq.com）；③代理统一 WebView2 单实例（B11 已定），系统代理全部淘汰；④一期=微信视频号 B1-B11（替代 wx_video_download.exe），二期=短剧翻写（替代 res_download.exe）。
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
