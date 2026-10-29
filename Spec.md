@@ -1,20 +1,20 @@
-# Spec：二合一下载器 TikHub 数据后端版（本版本仅视频号）
+# Spec：号匣（haoxia）微信视频号下载器（红狐主 / TikHub 备双供应商）
 
-> 状态：草稿 · v1.84 · 2026-10-29（v1.80 400 官方确认；v1.81 前端安全修复落档；v1.82 下载链路三连环·环3收口：L5 校验=Content-Length 字节权威、file_size 降级纯展示；v1.83 实施前风险逐项拍板统一落档：①成本感知转备（供应商级熔断提前阶段一，修正 v1.45）②解析防御五件套 ③红狐 T+1 方案 A+空确认标记+total=0 三态区分（empty_reason 实测）；v1.84 实施前风险⑤-⑪统一落档：⑤开发环境 uv 接管（pyproject/uv.lock/.python-version/scripts_scan_deps.py，15 依赖全量迁移）⑥打包两件套+分支策略（master=旧项目冻结、feature/haoxia=号匣 V1 全新产品：纯 API、零外部二进制、无旧链路、.env.example 首启生成、产物名"号匣"）⑦前端集成回归三层（L1 功能回归 10 项必做）⑧nickname 重名（锚定唯一 ID+配对缓存+TikHub 兜底）⑨SQLite 并发（客户端本地库，WAL+busy_timeout 5000）⑩大整数核查项（全链路 string 已定 v1.42，实施 grep 排查三类值）⑪自动更新替换权限（退出后替换 A3，阶段二升 A2）；客户端 UI 规范遵循暗宇宙设计系统，氛围层+操作区克制；「两阶段交付路线」：阶段一自用版 / 阶段二商业化版）
-> 范围：本版本仅覆盖**视频号（TikHub 后端）**；**短剧嗅探不在本版本范围**（另行排期合入）。
-> 目的：本文档用于对齐需求与实现边界，供团队探讨迭代。内容基于现状代码统计与知识库《TikHub 供应商契约》整理。
+> 状态：草稿 · v1.85 · 2026-10-29（v1.84 实施前风险⑤-⑪统一落档；v1.85 Spec 全量审查清零旧文字残留：标题号匣化、阶段一前置条件回填（TikHub 风控解除 v1.60/v1.65 实测可用）、客户端版本号 1.0.0（修正 v1.47 v0.1.0 残留）、fetch_channel_id_to_username 移出×3（v1.80）、熔断归属修正（v1.83 供应商级提前阶段一）、L1 口径（share_url 主路径 v1.78）、L2 红狐主注（v1.39）、"不调 TikHub"→"不调上游"、接口总数统一 38）；此前版本记录：v1.80 400 官方确认；v1.81 前端安全修复落档；v1.82 下载链路三连环·环3收口：L5 校验=Content-Length 字节权威、file_size 降级纯展示；v1.83 实施前风险逐项拍板统一落档：①成本感知转备（供应商级熔断提前阶段一，修正 v1.45）②解析防御五件套 ③红狐 T+1 方案 A+空确认标记+total=0 三态区分（empty_reason 实测）；v1.84 实施前风险⑤-⑪统一落档：⑤开发环境 uv 接管（pyproject/uv.lock/.python-version/scripts_scan_deps.py，15 依赖全量迁移）⑥打包两件套+分支策略（master=旧项目冻结、feature/haoxia=号匣 V1 全新产品：纯 API、零外部二进制、无旧链路、.env.example 首启生成、产物名"号匣"）⑦前端集成回归三层（L1 功能回归 10 项必做）⑧nickname 重名（锚定唯一 ID+配对缓存+TikHub 兜底）⑨SQLite 并发（客户端本地库，WAL+busy_timeout 5000）⑩大整数核查项（全链路 string 已定 v1.42，实施 grep 排查三类值）⑪自动更新替换权限（退出后替换 A3，阶段二升 A2）；客户端 UI 规范遵循暗宇宙设计系统，氛围层+操作区克制；「两阶段交付路线」：阶段一自用版 / 阶段二商业化版）
+> 范围：本版本仅覆盖**视频号（数据源=红狐主 / TikHub 备）**；**短剧嗅探不在本版本范围**（另行排期合入）。
+> 目的：本文档用于对齐需求与实现边界，供团队探讨迭代。内容基于现状代码统计与知识库《TikHub 供应商契约》《红狐 RedFoxHub 契约》整理。
 
 ---
 
 ## 两阶段交付路线（v1.39 新增：阶段一自用版 / 阶段二商业化版）
 
-> 决策（2026-10-28 用户拍板）：本版本拆成两个阶段交付。**阶段一不做支付、不做定价，完全满足自用**（公司内部自用，不对外售卖）；**阶段二做商业化**（支付 + 卡密 + 点数计费）。两阶段共享同一核心（TikHub 换源 + 本地能力 + 缓存降本），阶段二 = 阶段一 + 商业化收费闭环，不返工核心。
+> 决策（2026-10-28 用户拍板）：本版本拆成两个阶段交付。**阶段一不做支付、不做定价，完全满足自用**（公司内部自用，不对外售卖）；**阶段二做商业化**（支付 + 卡密 + 点数计费）。两阶段共享同一核心（双供应商换源 红狐主/TikHub 备 + 本地能力 + 缓存降本），阶段二 = 阶段一 + 商业化收费闭环，不返工核心。
 
 ### 1. 软件功能总账（按域统计，Spec v1.38 收敛）
 
 | 域 | 功能明细 | 落点 |
 |---|---|---|
-| **A 数据获取** | 跨号搜索作者、添加/批量添加作者、作者作品列表（分页）、**作者合集（合集列表 + 合集内视频，v1.54 进本版，TikHub 专属）**、直播回放列表（分页）、视频详情、分享链接解析（share_url，v1.78 主路径）、sph 短号映射（可选辅助，v1.77 降级）、作者直下（贴链接→列表直出→下载） | 前端 `/api/search/*`、`/api/video/*`、`/api/live/*` 等视频号 38 个接口（换源 TikHub，前端接口不变） |
+| **A 数据获取** | 跨号搜索作者、添加/批量添加作者、作者作品列表（分页）、**作者合集（合集列表 + 合集内视频，v1.54 进本版，TikHub 专属）**、直播回放列表（分页）、视频详情、分享链接解析（share_url，v1.78 主路径）、sph 短号映射（可选辅助，v1.77 降级；fetch_channel_id_to_username v1.80 实测 400 移出）、作者直下（贴链接→列表直出→下载） | 前端 `/api/search/*`、`/api/video/*`、`/api/live/*` 等视频号 38 个接口（换源红狐主/TikHub 备，前端接口不变） |
 | **B 本地能力** | 下载引擎（自研直链下载 + **Python 内嵌解密** ISAAC-64/128KB XOR）、SQLite 存储（authors/author_videos/download_tasks/task_log/resume_states）、播放器、头像/封面直链、下载任务管理（进度/状态/速度实时、取消/删除/清空、批量去重） | 本机 Python 后端 + 本地 DB，与数据源无关 |
 | **C 监控** | 增量监控（**打开界面即同步 + 标星作者每天 2 次兜底，v1.22**；只拉第一页对比 createtime）、监控器本体 | monitor/* + 前端监控 tab |
 | **D 缓存降本** | L1 链接解析（channel_alias，TTL 1 年）、L2 列表快照（author_list_snapshot，120min，48h 硬上限，**含合集列表，v1.55 同取同存同过期**）、L3 链接年龄窗口（decode_key **不长期缓存**/详情 media 短 TTL 4–12h + 下载前安全窗口=实测×0.8 出数前 24h 保守）、L4 搜索缓存（search_cache，有结果 24h/无结果 1h）、L5 下载去重、api_usage 成本计量 | 客户端本地 SQLite（**阶段一，无服务器**，§5①）；网关共享形态=阶段二 |
@@ -49,7 +49,7 @@
 |---|---|
 | 卡密激活模块 | 客户端顶栏「卡密」tab：输入 16 位卡密→绑定设备→兑换点数（照 §4.2 行业标准：入口可达/单输入框/输入体验/精确反馈/状态展示） |
 | 柠檬后台对接 | 应用「号匣」（香港库 apps.id=3，2026-10-28 已由 downloader 更名完成，app_id=app_3b7743b66b114c42aa655bb19a61d4f1 不变）→ 4 档规格（1天3/3天10/7天25/30天100 星尘）→ 批次生成 → CSV 导出 → 客服人工发卡（已拍板） |
-| 点数计费 | 1 操作 = 1 点；**扣点先于调用**（余额不足直接 429，不调 TikHub） |
+| 点数计费 | 1 操作 = 1 点；**扣点先于调用**（余额不足直接 429，不调上游） |
 | route_rate 定价表 | 网关统一收口：产品/端点/定价/汇率（星尘 SD，1 点≈¥0.07 锚），人工改表即生效 |
 | 一卡一机 | 设备指纹绑定防共享；客户端自助解绑限 2 次 + 客服换绑 |
 | 对账 | api_usage 全量启用：收入 = Σ 售卡×售价；成本 = Σ api_usage.cost；月度报表 |
@@ -79,8 +79,8 @@
 | 项 | 状态 |
 |---|---|
 | TIKHUB_KEY | ✅ 已建（server-secrets，len=60，2026-10-27 核验） |
-| TikHub 充值/权限 | ⏸ **用户拍板先搁置（2026-10-28）**：微信系端点账号级权限未开通（403 1010/400），不开工单不处理；**红狐主链路已可用（直链实测 206 可播），阶段一不依赖 TikHub**；备用链路待未来权限开通后启用（Range 实测+搜一搜验证排入开通后清单） |
-| 本机 Python 后端（内嵌解密） | 🔄 现有链路改造中：Go 下载/解密服务**移除**（v1.40 拍板），Python 内嵌解密取代；阶段一验收=本地样本实测解密可播放 |
+| TikHub 充值/权限 | ✅ **已实测可用（v1.60 风控解除：fetch_user_videos / fetch_user_profile / fetch_video_comments 全 200 计费成功；v1.65 export_id 直通 + media full_url Range 206 断点续传实测）**；仅搜索域（fetch_search/fetch_search_videos）与 channel_id 域（fetch_channel_id_to_username）为**平台侧 400（v1.80 官方确认含"服务器内部错误"且不计费）**→ 不接入主链路，由红狐 searchWork/searchUser 与 share_url 直达替代；不再存在"权限搁置待开通"状态 |
+| 本机 Python 后端（内嵌解密） | ✅ **已验证（v1.70 端到端实测）**：Python 内嵌解密（ISAAC-64 + 128KB XOR）本地样本与真实素材均解密成功、ffprobe 可播；Go 下载/解密服务**已移除**（v1.40 拍板）；阶段一验收判据已实测达成 |
 
 **③ 自动更新降级**：阶段一保留基础更新机制（§2.6），更新源/频率可先禁用或手动——更新失败不阻塞自用（浏览/下载不依赖更新）。
 
@@ -101,8 +101,8 @@
 | 5 | TTL 口径矛盾（P1 15–30min vs 拍板 120min；L4 10–30min vs 24h/1h；L3 7–30 天 vs 24h 窗口） | **已闭环（2026-10-28）：TTL 单一事实源治理**——根因=旧段落未随拍板回填（非设计矛盾）。权威口径以 §4 缓存表为准：L1=1 年复查期 / L2=120min（48h 硬上限）/ L3=decode_key 不长期缓存 + media 年龄安全窗口（出数前 24h 保守=实测×0.8）/ L4=有结果 24h、无结果 1h / L5=永久。**同步回填 9 处旧残留**：①总表 L3 口径 ②P1 建表名（author_list_snapshot、L3 无新表）③P1 L2/L3/L4 TTL ④P1 service 路由（v1.40 下线）⑤fetch_search_videos 搜索端点表述 5 处（v1.39 实锤为搜视频端点）⑥P1 create2 下载残留。**新纪律（P0）**：今后每轮拍板必须回填受影响旧段落（决策记录+段落同步改，不留副本） | ✅ 已拍板 2026-10-28 |
 | 6 | 超时/重试计费防护（30s 超时已扣费，重试可能双计费） | **已拍板（2026-10-28，v1.45）：超时分级 + 失败分类重试（本版做）；熔断切换后置（阶段二，v1.83 修正：供应商级熔断提前阶段一）**。事实依据：①上游计费=按调用次数扣，**执行完即扣费、不关心客户端是否收到**——30s 卡点丢弃=白付费+用户失败，超时值必须"够大到不白丢"；②红狐失败（非 200）不计费、TikHub 400/404 免费（实测）→ 确定性失败重试安全；③读超时=状态未知（上游可能已执行）→ 绝不重试；④公司规范 ADR-020：禁止写死全局超时、失败分类两套处理、熔断切换；⑤幂等白捡：柠檬 consume 自带 biz_id 幂等（v1.26 实证）。**决策**：①**超时分级**（值进 billing_config，改表不改代码）：连接超时 5s 统一、红狐读 30s、TikHub 读 90s（官方要求 ≥30s，宁可大、靠观测调）；②**失败分类重试**：连接失败（未到达上游）/429/5xx → 指数退避 3 次（2s→4s→8s+jitter）；401/402/400 → 不重试直接失败+提示；**读超时 → 绝不重试**；③**api_usage 加 duration_ms 列**（P95 观测驱动超时调参，不拍脑袋）；④熔断切换（supplier_cost active 机制，连续 3 次失败→熔断 60s→冷却恢复）：**供应商级熔断提前阶段一**（成本感知转备 v1.83=实施前风险①拍板：供应商故障自动切换阶段一实施），计费级熔断仍后置阶段二；⑤失败返还 + biz_id 幂等利用=阶段二商业化 | ✅ 已拍板 2026-10-28 |
 | 7 | 本地应用取 TIKHUB_KEY 通道（server-secrets 注入方式未定义） | **已拍板（2026-10-28，v1.46）：key=静态配置，走 Pydantic Settings（.env）**。阶段一（自用版，无服务器）：本地 `.env` 文件两行 `REDFOX_API_KEY` / `TIKHUB_KEY`，Python 后端启动时读；改 key=改 .env 重启。阶段二（商业化，网关在服务器）：**key 上收服务器 env（server-secrets 落库），客户端零 key**——key 在客户端=用户拿到即可绕过我们直连上游，与"价格永不在客户端"同一原则。**配套纪律**：.env 不进安装包（打包排除）、不入 git；自用版本地明文可接受（不对外发）；key 有效性检测走既有接口级全局熔断（401/402 → 提示检查 Key/余额） | ✅ 已拍板 2026-10-28 |
-| 8 | 阶段一自动更新源矛盾（保留基础机制但无更新源，柠檬=阶段二） | **已拍板（2026-10-28，v1.47）：复用公司标准 OTA（ADR-022 静态存储发布模式），阶段一即启用完整自动更新**。事实依据：①拾光AI 已有生产验证的完整 OTA 标准——ADR-022（客户端直连 OSS 零服务器、latest.json 指针人控切换）+ 拾光 v0.6.7 发版（`shiguang-ai/releases\|updates/v0.6.7/` + `updates/latest.json` 指针，ETag=本地 MD5）+ 发版手册（`-PublishPointer` 人控覆盖指针、release_record.py 自动登记）+ 就绪度清单（latest.json 四字段 version/sha256/url/pub_date）；②自动更新与支付/卡密解耦——阶段一有自动更新但无任何收费元素。**产品定名（2026-10-28）**：**「号匣」**（OSS 目录 `haoxia`，撞名初判无同名知名产品；拼音好拼无歧义）。**决策**：①更新源=`lemon-kami-artifacts` 公共读桶（规范钦定 OTA 分发桶）`https://lemon-kami-artifacts.oss-cn-beijing.aliyuncs.com/haoxia/updates/latest.json`；②目录结构对齐拾光：`haoxia/releases\|updates/{版本}/`（安装包+update.zip 双产物不可变）+ `updates/latest.json` 指针（人控切换）；③客户端版本号 **v0.1.0 起步**（与 Spec 版本号独立两套）；④发布链路对齐 ADR-021 本地化：本机构建→公共桶不可变产物+私有桶归档→`-PublishPointer` 切指针→release_record.py 登记；⑤客户端 updater 逻辑复用既有自动更新设计（929 行状态机：后台检查 10s 超时静默失败/当天不重试/独立安装器/sha256 校验）；⑥阶段二同机制零改造（源不变，自动更新本身不收费） | ✅ 已拍板 2026-10-28 |
-| 9 | 断点续传未设计（自研下载器 resume） | **已拍板（2026-10-28，v1.50）：阶段一实施，A 方案（单连接 Range 自动续传）**。事实依据：①HTTP Range 协议（RFC 7233：Range/206/416）；②**红狐直链实测支持**（206 Partial Content + Accept-Ranges: bytes + Content-Range 完整，2026-10-28 `scripts_probe_range_support.py` 实测，文件总长 3.1MB 单视频样本）；③TikHub 当前账号微信系端点被账号级权限挡住（fetch_search 400 / fetch_user_videos 403 1010 / fetch_video_detail 403，非余额问题）→ **用户拍板（2026-10-28）：TikHub 权限先搁置不处理，红狐主链路为准**，阶段一不阻塞；④TikHub 直链与红狐同微信 CDN 集群（finder.video.qq.com vs findermp.video.qq.com、同 251/20302/stodownload 路径格式），推断支持 Range、未来权限开通后补测。**决策**：①自研下载器断点续传=**通用探测设计**：下载失败/中断→任务标 pending（gui.py 既有机制）→恢复时探测直链 `Accept-Ranges`→支持则 `Range: bytes=已下字节-` 续传（进度写 resume_states）→不支持/416 则整包重下+提示；②下载完成后 Content-Length 对齐校验→统一进解密（解密在下载后执行，续传不影响解密逻辑）；③阶段一仅红狐链路启用（实测可用），TikHub 备用链路待权限开通后按同一设计自动生效 | ✅ 已拍板 2026-10-28 |
+| 8 | 阶段一自动更新源矛盾（保留基础机制但无更新源，柠檬=阶段二） | **已拍板（2026-10-28，v1.47）：复用公司标准 OTA（ADR-022 静态存储发布模式），阶段一即启用完整自动更新**。事实依据：①拾光AI 已有生产验证的完整 OTA 标准——ADR-022（客户端直连 OSS 零服务器、latest.json 指针人控切换）+ 拾光 v0.6.7 发版（`shiguang-ai/releases\|updates/v0.6.7/` + `updates/latest.json` 指针，ETag=本地 MD5）+ 发版手册（`-PublishPointer` 人控覆盖指针、release_record.py 自动登记）+ 就绪度清单（latest.json 四字段 version/sha256/url/pub_date）；②自动更新与支付/卡密解耦——阶段一有自动更新但无任何收费元素。**产品定名（2026-10-28）**：**「号匣」**（OSS 目录 `haoxia`，撞名初判无同名知名产品；拼音好拼无歧义）。**决策**：①更新源=`lemon-kami-artifacts` 公共读桶（规范钦定 OTA 分发桶）`https://lemon-kami-artifacts.oss-cn-beijing.aliyuncs.com/haoxia/updates/latest.json`；②目录结构对齐拾光：`haoxia/releases\|updates/{版本}/`（安装包+update.zip 双产物不可变）+ `updates/latest.json` 指针（人控切换）；③客户端版本号 **1.0.0 起步**（v1.84 修正 v1.47"v0.1.0"残留：VERSION 单一事实源沿用、号匣从 1.0.0 独立起步，与 Spec 版本号独立两套）；④发布链路对齐 ADR-021 本地化：本机构建→公共桶不可变产物+私有桶归档→`-PublishPointer` 切指针→release_record.py 登记；⑤客户端 updater 逻辑复用既有自动更新设计（929 行状态机：后台检查 10s 超时静默失败/当天不重试/独立安装器/sha256 校验）；⑥阶段二同机制零改造（源不变，自动更新本身不收费） | ✅ 已拍板 2026-10-28 |
+| 9 | 断点续传未设计（自研下载器 resume） | **已拍板（2026-10-28，v1.50）：阶段一实施，A 方案（单连接 Range 自动续传）**。事实依据：①HTTP Range 协议（RFC 7233：Range/206/416）；②**红狐直链实测支持**（206 Partial Content + Accept-Ranges: bytes + Content-Range 完整，2026-10-28 `scripts_probe_range_support.py` 实测，文件总长 3.1MB 单视频样本）；③TikHub 微信系端点账号级风控已于 **v1.60 解除实测**（fetch_user_videos / fetch_video_detail 200 计费成功），**v1.65 实测 media full_url（wxapp.tc.qq.com CDN）Range 探测 HTTP 206 + Accept-Ranges: bytes**——断点续传 TikHub 链路已实测可用（与红狐 206 同设计），不再有"权限搁置待开通"状态；④TikHub 直链与红狐同微信 CDN 集群（finder.video.qq.com vs findermp.video.qq.com、同 251/20302/stodownload 路径格式）。**决策**：①自研下载器断点续传=**通用探测设计**：下载失败/中断→任务标 pending（gui.py 既有机制）→恢复时探测直链 `Accept-Ranges`→支持则 `Range: bytes=已下字节-` 续传（进度写 resume_states）→不支持/416 则整包重下+提示；②下载完成后 Content-Length 对齐校验→统一进解密（解密在下载后执行，续传不影响解密逻辑）；③阶段一双链路均启用（红狐 v1.50 实测、TikHub v1.65 实测） | ✅ 已拍板 2026-10-28（v1.65 补测收口） |
 | 10 | 封面/头像 URL 过期兜底 | **已拍板（2026-10-28，v1.48）：行业标准版，复用 L3 机制零额外成本**。事实依据：①行业标准=签名 URL 不存库当永久地址——存 URL 同时存过期时间、提供前检查过期、过期重新拉取（PostPulse「store expiry alongside URL + check before serving + re-fetch when expired」/ 技术栈「签名URL不要存库当永久地址」）；客户端=加载失败→占位图+**有限次重试**+重试上限防无限循环（CSDN data-retry-times / safe-img fallback chain）；②封面/头像 URL 天级过期是常态（DEV：YouTube 创作者头像一周内有效）；③红狐 `get_user_works` 返回 headUrl/coverImgUrl → **L2 列表刷新顺带更新封面/头像，无独立调用**。**决策**：①authors 表加 `cover_updated_at` 列（头像封面同源同更）；②浏览作者页检查年龄（TTL 按天计、与 L3 同机制宽松），过期走 L2 列表刷新顺带带回新 URL；③客户端图片加载失败→占位图 + 重试≤3 次 + 超限稳定占位图（防无限循环） | ✅ 已拍板 2026-10-28 |
 | 11 | 多 Key 轮换 | **已拍板（2026-10-28，v1.51）：不做（平台口径不支持）**。事实依据：①TikHub 官方限流=**账号级速率**——默认 10 RPS（按单端点计、不同端点并行不抢限额），RPS 提速为账号级月付（20 RPS $5/月、100 RPS $55/月）；控制台可生成多个 token，但**无"多 token 独立配额"承诺**——换 key 不涨 RPS，多 key 对限流无效；②红狐定价按每日请求量阶梯（1,000–30,000 次/月），有频率限制（社区实测调用间隔 0.15–0.25s≈4–7 QPS），**官方未公开限流粒度条款**（无 key 级独立配额承诺）；③已有防护已覆盖多 key 想解决的问题：429 指数退避重试（v1.45）+ 双供应商互备（v1.39）+ 账号级问题走工单/多账号备用。**决策**：多 key 轮换**不优先做**；仅当未来实测发现某上游按 key 粒度限流时再启用 | ✅ 已拍板 2026-10-28（不做） |
 | 12 | 自用成本统计视图 | **已拍板（2026-10-28，v1.49）：阶段二实施项，阶段一跳过**。归属=网关侧（服务器端）——`api_usage` 表由网关转发时顺手记（endpoint/supplier/count/cost/duration_ms），成本统计视图=网关侧内部报表接口，按日期/端点/供应商聚合，仅供运营看、不给用户；**阶段一无网关（客户端直连上游）→ 不计量不报表，跳过不阻塞阶段一闭环**；**阶段二定价前必须做**（真实成本基准，回答"毛利是否严谨"） | ✅ 已拍板 2026-10-28（阶段二实施） |
@@ -168,23 +168,23 @@
 
 - **数据获取层换源**：搜索作者、作者作品列表、直播回放列表、视频详情、分享链接解析，全部改调外部数据 API（红狐 `redfox_client` 主 / TikHub `tikhub_client` 备，鉴权 `Bearer REDFOX_API_KEY` / `Bearer TIKHUB_KEY`），不再经过微信客户端注入链路。
 - **本地能力保留**：下载引擎（url + decode_key 即可下载）、ISAAC-64 解密、SQLite 存储、播放器、头像/封面直链均不依赖微信客户端，原样保留。
-- **前端接口层不变**：现有约 48 个 `/api/*` 前端接口与交互不变，替换只发生在 FastAPI 与数据源之间。
+- **前端接口层不变**：现有视频号 **38 个** `/api/*` 前端接口与交互不变（短剧 10 个不在本版本范围），替换只发生在 FastAPI 与数据源之间。
 - **成本受控**：微信系数据端点上游成本=红狐 ¥0.04/次（主，v1.41）或 TikHub ¥0.072/次（备），按量计费；监控轮询频率从"每 30 分钟"改为**打开界面即同步 + 标星作者每天 2 次兜底（v1.22）**，增量只拉第一页对比 `createtime`。
 - **合规定位（v1.75 修正）**：**红狐=正规付费数据 API（有 ToS/商业授权），对外商业化的主数据源走红狐，合规**；**TikHub 抓取违反平台 ToS，属合规灰色**——仅作内部备用链路（自用阶段一可用；对外商业化阶段二**不把 TikHub 作为主数据源对外承诺**，红狐为主）；文档与 UI 明示"抓取类数据仅限个人调研/内部分析"。
 - **范围**：本版本仅覆盖视频号功能；**短剧嗅探（res_download 链路 / static/sniff 前端）不在本版本范围**，后续版本再合入。
 
-## 接口映射总表（前端 48 ↔ 后端数据源）
+## 接口映射总表（前端 38 ↔ 后端数据源）
 > 阶段归属：**阶段一**（换源核心，前端接口不变）
 
 前端**视频号 38 个接口全部复用不变**（短剧 10 个不在本版本范围）；映射发生在「后端服务层 ↔ 数据源」这一层。分三类：
 
-### A. 数据获取类：换源 TikHub（7 个后端接口，前端接口不变）
+### A. 数据获取类：换源红狐主/TikHub 备（7 个后端接口，前端接口不变）
 > 注：本表为 TikHub 换源时代分析。v1.39 双供应商后：**同功能端点红狐优先且成本更低（红狐广域库 ¥0.04/次 < TikHub ¥0.072/次，见 §6.1 supplier_cost）**；表中计费列为 TikHub 备胎价。
 
 | 前端接口 | 当前数据源（微信客户端） | TikHub 替代端点 | 计费 |
 |---|---|---|---|
 | `/api/search/authors?q=` | contact/search | **红狐 `searchUsers`（主）/ TikHub `wechat_search/v2/fetch_search` account 垂类（备）**（v1.39 修正：`fetch_search_videos` 实为搜视频端点） | ¥0.04 / $0.01 |
-| `/api/search/author/add` | contact/search + feed/list 首屏 | `fetch_channel_id_to_username`（可选）+ `fetch_user_videos` 第 1 页 | $0.01–0.02/次 |
+| `/api/search/author/add` | contact/search + feed/list 首屏 | `fetch_user_videos` 第 1 页（链接解析昵称→红狐 searchUser 兜底，v1.79/80 后 fetch_channel_id_to_username 已 400 移出） | $0.01/次 |
 | `/api/search/author/batch-add` | 同上（批量） | `fetch_user_videos` × N | $0.01 × N |
 | `/api/video/author/:id/add` | feed/list | `fetch_user_videos` 第 1 页（增量） | $0.01/次 |
 | `/api/video/add-all` | feed/list × 全部作者 | `fetch_user_videos` × N（增量） | $0.01 × N |
@@ -226,7 +226,7 @@
 
 ### TikHub 端点使用清单（按本映射收敛）
 
-- **核心 5**：红狐 `searchUsers`（搜作者，主）/ TikHub `fetch_user_videos` / `fetch_live_history` / `fetch_video_detail`（**含 share_url 解析=L1 主路径，v1.77 实测闭环**）/ `fetch_channel_id_to_username`（可选辅助，v1.77 降级；`fetch_search_videos` 实为**搜视频**端点，不再作为搜索端点）
+- **核心 5**：红狐 `searchUsers`（搜作者，主）/ TikHub `fetch_user_videos` / `fetch_live_history` / `fetch_video_detail`（**含 share_url 解析=L1 主路径，v1.77 实测闭环**）/ ~~`fetch_channel_id_to_username`~~（**v1.79/80 实测 400 平台侧确认，彻底移出主链路**；主页链接兜底=链接页取昵称→红狐 searchUser；`fetch_search_videos` 实为**搜视频**端点，不再作为搜索端点）
 - **增强 4（已部分进本版）**：`fetch_user_profile`（主页资料，**v1.60 已接入本版**懒触发+TTL 7 天）/ `fetch_video_comments`（评论，**v1.60 已接入本版**懒触发+TTL 7 天）/ `fetch_user_collections` + `fetch_collection_videos`（合集，**v1.54 已进本版**顺风车）/ `fetch_search_channel_videos`（号内搜索，**仍 P3 后置**）
 
 ## 接口收敛分析（现状繁琐/重复 ↔ TikHub 覆盖）
@@ -263,14 +263,14 @@
 ## 换源后可砍项清单（采用 TikHub 后冗余逻辑/功能）
 > 阶段归属：**阶段一**
 
-换源 TikHub 后，依赖「微信客户端」的逻辑整体失去存在意义，可按档位移除或替换：
+换源红狐主/TikHub 备后，依赖「微信客户端」的逻辑整体失去存在意义，可按档位移除或替换：
 
 ### A. 彻底移除（微信客户端依赖消失）
 
 | # | 可砍项 | 现状位置 | 移除后 |
 |---|---|---|---|
 | A1 | **微信客户端本体**：登录 / 扫码 / 常驻运行 / 引导 UI | 使用前提 | 用户无需打开微信（本方案核心收益） |
-| A2 | `weixin_client.py` 微信通道封装：contact/search、feed/list、live/replay/list、feed/profile、check_wechat_connected | `core/utils/weixin_client.py` | 替换为 `tikhub_client.py`（同接口、异实现） |
+| A2 | `weixin_client.py` 微信通道封装：contact/search、feed/list、live/replay/list、feed/profile、check_wechat_connected | `core/utils/weixin_client.py` | 替换为 `redfox_client.py`（主）+ `tikhub_client.py`（备）（同接口、异实现，v1.39 双供应商） |
 | A3 | 状态接口 `wechat_connected` 字段 | `/api/status`、`/api/service/status` | 改为 `tikhub_connected` + `balance` |
 | A4 | 前端微信连接状态 UI 与 5 处检测（videoOps.js:12/:16/:127/:529/:533、authorDetail.js:32） | 下载前置检测 / 首页状态卡 | 改 TikHub 连通检测或移除 |
 | A5 | 微信详情接口解析 url+decodeKey 的链路 | 后端 task 创建前段 | TikHub `fetch_video_detail` 直接供给 |
@@ -370,7 +370,7 @@
 
 | 层 | 缓存对象 | TTL | 命中率预估 | 说明 |
 |---|---|---|---|---|
-| L1 | sph 短号 → username 映射（顺带昵称/简介） | 1 年复查期（惰性失效+验证兜底） | ~100% | 短号几乎不变；失效/删号靠下游验证兜底删映射重取（完整规格见 §4.2） |
+| L1 | 分享链接（sph 短码）→ username+nickname 映射（v1.78 改 share_url 入参，顺带昵称/简介） | 1 年复查期（惰性失效+验证兜底） | ~100% | 短号几乎不变；失效/删号靠下游验证兜底删映射重取（完整规格见 §4.2） |
 | L2 | 作者作品/回放列表（fetch_user_videos / fetch_live_history） | **120 分钟（2026-10-27 用户拍板，省钱档）** | 追更 80–95% | 打开界面秒开 + 后台静默刷新；列表 raw=false 自带下载链接 → 命中=浏览+下载双省；48h 硬上限（urlValidDuration 官方字段，观察实验校准） |
 | L3 | 单作品详情（fetch_video_detail：media） | **详情 media 短 TTL 4–12 小时（v1.60 详情页懒触发缓存）+ 下载前安全窗口 = 实测保质期×0.8（出数前 24h 保守，v1.16 权威口径）** | 详情 90%+（旧视频全在 DB） | **decode_key 每次请求变化，不长期缓存**（v1.11 文档实证，修正"key 长缓存"）；两个参数职责不同：TTL=详情页缓存多久刷新（4–12h），安全窗口=下载前链接年龄判断（实测×0.8，观察实验校准）；过期由现有 ensure_valid_url 触发刷新 |
 | L4 | 作者搜索结果（关键词 → 作者列表） | **24h 有结果 / 1h 无结果（2026-10-27 用户拍板，惰性刷新）** | 50–70% | 作者集合按天/周变化，非"每次搜完有新作者"（修正：原 10–30 分钟是误套视频节奏）；无结果短 TTL 防新号误判 |
@@ -428,6 +428,8 @@ CREATE TABLE channel_alias (
 
 **通俗定位**：用户打开某个作者的页面 → 系统去拉他的作品/回放列表（一次 $0.01）→ 记住"这作者啥时候拉过"。没过期就直接免费给，过期才再去拉一次，增量只补新发的。**列表（raw=false）自带下载链接（full_url+decode_key 配对），所以列表缓存命中 = 浏览 + 下载双省**（v1.13 实测确认）。
 
+> **红狐优先后口径（v1.39/v1.78 补充）**：列表主链路=**红狐 `get_user_works`（按次 ¥0.04，videoUrl 直链免解密，v1.78 实测可播）**，TikHub `fetch_user_videos`（$0.01/页，需解密）为**兜底**（红狐 T+1 当天新作者 total=0 时补拉，v1.83 方案 A）；缓存键/TTL/命中机制不变（存储无关接口化，§5①），下方 TikHub 页计费口径为兜底链路成本。
+
 **接口能力事实（v1.20 统计确认，分页决策的依据）**：
 - **TikHub 列表接口无"全量返回"模式**：`fetch_user_videos` / `fetch_live_history` 只能靠 `last_buffer`（base64 不透明游标，首页留空）**一页一页翻**；`fetch_search_channel_videos` 同理用 `cursor`/`next_cursor`
 - 文档**无 total 字段、无每页条数参数**；成本 = **$0.01/页 × 页数**，与作者规模线性挂钩
@@ -438,11 +440,11 @@ CREATE TABLE channel_alias (
 | # | 文件 | 动什么 |
 |---|---|---|
 | 1 | `core/utils/database/crud/models.py` | 新增 `ChannelSyncState` dataclass；`AuthorVideo.decode_key: int → str`（TEXT 迁移，v1.11 已定） |
-| 2 | 新建 `core/service/tikhub_client.py` | `TikhubClient`：统一 `raw=false`、浏览器 UA（P0 纪律）、Bearer `TIKHUB_KEY`、**超时分级（v1.45：连接 5s / 红狐读 30s / TikHub 读 90s，值读 billing_config）**、401/402/5xx 语义 + **失败分类重试（连接失败/429/5xx 指数退避 3 次；读超时绝不重试；401/402/400 不重试）**（替代 weixin_client 的数据获取部分） |
+| 2 | 新建 `core/service/redfox_client.py` + `core/service/tikhub_client.py` | `RedfoxClient`（主，Bearer `REDFOX_API_KEY`，base=redfox.hk，成功码 code=2000）/ `TikhubClient`（兜底，Bearer `TIKHUB_KEY`）：统一 `raw=false`、浏览器 UA（P0 纪律）、**超时分级（v1.45：连接 5s / 红狐读 30s / TikHub 读 90s，值读 billing_config）**、401/402/5xx 语义 + **失败分类重试（连接失败/429/5xx 指数退避 3 次；读超时绝不重试；401/402/400 不重试）**（替代 weixin_client 的数据获取部分） |
 | 3 | `core/service/video.py` | `_fetch_author_videos_from_backend` / `_fetch_author_replays_from_backend` 内部换源走 TikhubClient；`sync_and_get_new_videos` / `add_author_latest_videos` 入口加缓存判断；新增 `ensure_author_list_fresh(author_id)`（浏览入口） |
 | 4 | `core/api/routers/video.py` | 前端接口**不改**；`get_author_videos` 读库天然命中；作者页打开时联动 `ensure_author_list_fresh`（静默后台） |
 
-**网关化修正（v1.27）**：L2 分两层——**网关侧 `author_list_snapshot` 共享响应快照**（键=`username|video_type|page`，raw=false 完整响应含 full_url+decode_key，TTL=120min；跨用户命中=浏览+下载双省，我们只付一次钱）+ **客户端本地 `channel_sync_state` 便利贴**（用户私有同步进度，从网关快照回填自己的 author_videos）。流程：客户端请求作者列表 → 网关查共享快照（命中=0 成本直接返回；未命中=调 TikHub $0.01/页、落快照）→ 客户端把返回数据回填本地 author_videos（用户私有副本，秒开+隐私）。下面表结构是客户端本地便利贴（用户层）。
+**网关化修正（v1.27；阶段一注 v1.85）**：L2 分两层——**网关侧 `author_list_snapshot` 共享响应快照**（键=`username|video_type|page`，raw=false 完整响应含 full_url+decode_key，TTL=120min；跨用户命中=浏览+下载双省，我们只付一次钱）+ **客户端本地 `channel_sync_state` 便利贴**（用户私有同步进度，从网关快照回填自己的 author_videos）。流程：客户端请求作者列表 → 网关查共享快照（命中=0 成本直接返回；未命中=调上游、落快照）→ 客户端把返回数据回填本地 author_videos（用户私有副本，秒开+隐私）。**阶段一（无服务器）**：缓存落本地 SQLite、逻辑同（存储无关接口化，§5①），网关共享形态=阶段二。下面表结构是客户端本地便利贴（用户层）。
 
 **表结构**（客户端本地 `channel_sync_state`，方案 A"便利贴"：用户私有数据只有 author_videos 一份，本表只记同步状态）：
 
@@ -680,7 +682,7 @@ CREATE TABLE IF NOT EXISTS search_cache (
 
 | 表 | 兼容性 | 必改点 |
 |---|---|---|
-| authors | ✓ 语义吻合：`source_author_id` 可直接承担 TikHub `username`（作者主键）；name/bio/avatar_url/latest_publish_date 与 TikHub 返回同构 | **① 无需新增 channel_id 列**（v1.78：L1 解析主键=分享链接 link，channel_id 仅可选辅助场景才需要，实施时再定）；资料字段每次拉列表顺带覆盖更新 |
+| authors | ✓ 语义吻合：`source_author_id` 可直接承担 TikHub `username`（作者主键）；name/bio/avatar_url/latest_publish_date 与 TikHub 返回同构 | **① 无需新增 channel_id 列**（v1.78：L1 解析主键=分享链接 link；channel_id 仅作者认证增强场景需要，来源=`fetch_channel_info` v1.79 实测 200，实施时如接入再定列）；资料字段每次拉列表顺带覆盖更新 |
 | author_videos | ✓ `object_nonce_id`/`url`(media)/`spec`/`video_type`/`create_time` 全部对上；`decode_key` 列已存在 | **② 新增 `export_id`/`share_url` 列**（链接直下：用户贴的短链解析出 export_id 先落库，避免重复解析）；**③ 主键语义对齐：`video_id` 应= TikHub `object_id`**（64 位大整数按字符串存），否则同一视频重复入库破坏去重 |
 | download_tasks | ✓ url+key+spec 与 create2 链路完全同构，不动 | — |
 | task_log / resume_states | ✓ 与数据源无关，不动 | — |
@@ -694,7 +696,7 @@ CREATE TABLE IF NOT EXISTS search_cache (
 
 ### 2. 新增表清单（v1.23 修正：替代 v1.6 旧方案）
 
-> **⚠️ v1.27 网关化修正（2026-10-28）**：商业化架构定为 C/S 中转后，缓存分两层——**省钱层在网关共享**（L1 `channel_alias` / L2 **`author_list_snapshot` 响应快照** / L4 `search_cache`，跨用户跨机器命中=我们只付一次钱，不绑卡密/用户/设备，只认数据新鲜度），**用户层在客户端本地**（author_videos / L3 链接列 / download_tasks / 文件校验，隐私+秒开）。v1.23 曾废除 `author_list_cache` 改 `channel_sync_state` 便利贴——那是本地应用架构的产物；网关化后**恢复网关侧响应快照**（author_list_snapshot），`channel_sync_state` 定位改为客户端本地同步状态便利贴。`card` 表在 v1.26 已废除（柠檬为卡密真相源）。
+> **⚠️ v1.27 网关化修正（2026-10-28）+ v1.85 阶段注**：商业化架构定为 C/S 中转后，缓存分两层——**省钱层在网关共享**（L1 `channel_alias` / L2 **`author_list_snapshot` 响应快照** / L4 `search_cache`，跨用户跨机器命中=我们只付一次钱，不绑卡密/用户/设备，只认数据新鲜度），**用户层在客户端本地**（author_videos / L3 链接列 / download_tasks / 文件校验，隐私+秒开）。v1.23 曾废除 `author_list_cache` 改 `channel_sync_state` 便利贴——那是本地应用架构的产物；网关化后**恢复网关侧响应快照**（author_list_snapshot），`channel_sync_state` 定位改为客户端本地同步状态便利贴。`card` 表在 v1.26 已废除（柠檬为卡密真相源）。**阶段一实现口径（v1.53/§5①）**：阶段一（自用、无服务器）缓存全部落**本地 SQLite**（同表结构、字段不变），缓存逻辑按「存储无关」接口化实现，阶段二把同一套逻辑上移到网关 DB（只换存储层，零返工）；下表「（网关）」标注为阶段二挂载形态。
 
 | 表 | 用途 | 关键字段 | 对应层 |
 |---|---|---|---|
@@ -736,7 +738,7 @@ CREATE TABLE IF NOT EXISTS search_cache (
 
 - **砍掉**：卡密/设备/IP 维度频率限流（点数封顶已防脚本烧钱，脚本烧完点数余额不足自然熔断）；连续超限熔断（同上，无需另建）
 - **保留（服务器保护，仅 2 个轻桶）**：单卡密**并发上限 ≤5**（防瞬时打爆网关）；**全局 QPS 兜底**（防多卡同时打）
-- **扣费与限流顺序**：鉴权 → 扣点（余额不足 429 不调 TikHub）→ 限流（并发/全局桶）→ 业务；超限 429 + Retry-After，**不扣点**
+- **扣费与限流顺序**：鉴权 → 扣点（余额不足 429 不调上游）→ 限流（并发/全局桶）→ 业务；超限 429 + Retry-After，**不扣点**
 
 **接入柠檬前置检查（v1.25 新增，引用 ADR-062/086）**：
 - 新建 app 时 app 名/简介为中文 → **必须确认连接层 charset 已修复**（`DATABASE_URL` 带 `?charset=utf8mb4`，ADR-062 A+B 已上线），否则 app 中文名会乱码
@@ -838,7 +840,7 @@ CREATE TABLE IF NOT EXISTS supplier_cost (
 --   供应商失败熔断（连续 5xx/超时）→ 置 active=0 自动切另一家，冷却后恢复；不搞权重轮询（2 家无必要）
 --   v1.45：熔断切换=网关服务器级（非用户级），对客户端透明；阈值/冷却细节见下方「熔断切换设计（阶段二实施）」
 
-**熔断切换设计（阶段二实施，v1.45 落档）**——防供应商单点故障，网关级全局生效：
+**熔断切换设计（v1.45 落档；v1.83 修正：供应商级熔断提前到阶段一，计费级熔断仍阶段二）**——防供应商单点故障，对客户端透明生效：
 - **层级**：客户端 → 我们的网关（服务器）→ 上游（红狐/TikHub）。熔断发生在**网关层**，对客户端完全透明（客户端只连网关，不知道背后切换）；不是用户级兜底
 - **粒度**：当前按**供应商全局**熔断（仅 2 家）；预留按 (route, supplier) 细化（未来供应商增多再拆）
 - **触发**：该供应商**连续 3 次失败**（5xx / 读超时 / 连接失败均计入）→ 熔断
@@ -1044,7 +1046,7 @@ CREATE TABLE IF NOT EXISTS billing_config (
 > 阶段归属：**阶段一**
 
 - **维度：表结构（Spec v1.6 修 3 类）**
-  4. `authors` 不新增 `channel_id` 列（v1.78：L1 解析主键=分享链接 link；channel_id 仅可选辅助场景，实施时再定）
+  4. `authors` 不新增 `channel_id` 列（v1.78：L1 解析主键=分享链接 link；channel_id 仅作者认证增强场景，来源=fetch_channel_info v1.79，实施时如接入再定）
   5. `author_videos`：新增 `export_id/share_url` 列；**`decode_key` 改 TEXT**（TikHub 每次请求变化，INTEGER 语义作废）；**新增互动 5 列**（read_count/like_count/fav_count/forward_count/comment_count，官方命名）；删除冗余 `author_avatar`；`video_id` **已为平台自然键（v1.11 修正：入库即 obj.id，无需迁移）**
   6. 补索引：`author_videos(video_type)`、`author_videos(create_time)`、`download_tasks(video_type)`
 - **维度：缓存层（5 张新表 + 4 层缓存）**
@@ -1058,7 +1060,7 @@ CREATE TABLE IF NOT EXISTS billing_config (
 > 阶段归属：**阶段一**
 
 - **维度：后端换源（Spec v1.0 映射表 A 类 + 路由核对）**
-  12. 新增 `tikhub_client.py`（替代 `weixin_client.py` 数据获取 4 动作：search/user_videos/live_history/video_detail，同接口异实现）
+  12. 新增 `redfox_client.py`（主）+ `tikhub_client.py`（备）（替代 `weixin_client.py` 数据获取 4 动作：search/user_videos/live_history/video_detail，同接口异实现）
   13. 16 个 `require_wechat` 门禁路由处置：search 3 / video 3 / task 2 → 门禁替换为 TikHub 连通+余额检查；inputer 3 / monitor 5 → 移除门禁
   14. 后端独有 6 路由：`wechat-status` 移除、`link-status` 语义改 TikHub、`service/start|stop|restart` **下线**（v1.40 拍板 Go 进程移除）、`task/download-all` 门禁替换
   15. 监控器：保留本体，数据源换 TikHub 低频（打开界面即同步 + 标星每天 2 次兜底，v1.22）；5 处新增微信耦合点（task.py:750、monitor.py:252、service_status_push.py、tencent_doc.py、cli/service.py）同步清理
@@ -1277,14 +1279,14 @@ CREATE TABLE IF NOT EXISTS billing_config (
   - `wechat_channels/v2/fetch_user_videos` —— 作者作品列表（替代 feed 列表；红狐优先时改用红狐 `get_user_works`，见 §6.1）；
   - `wechat_channels/v2/fetch_live_history` —— 直播回放列表（替代回放列表）；
   - `wechat_channels/v2/fetch_video_detail` —— 单条详情 / 链接解析（替代详情接口；红狐 `get_work_by_link` 仅元数据无直链，贴单视频链接下载暂走本端点）；
-  - `wechat_channels/v2/fetch_channel_id_to_username` —— sph 短号 → username（**v1.77 降级为可选辅助**；L1 主路径=share_url 解析）。
+  - `wechat_channels/v2/fetch_channel_id_to_username` —— sph 短号 → username（**v1.79/80 实测 400 平台侧确认，彻底移出主链路**；L1 主路径=share_url 解析 v1.77）。
 - **增强端点（v1.75 修正：合集/主页资料/评论均已进本版，仅号内搜索预留）**：`fetch_user_collections` + `fetch_collection_videos`（合集，**进本版 v1.54**——作者页「合集」入口 → 合集内视频列表 → 按合集批量下载；数据源=TikHub 专属，红狐无合集接口；合集内视频优先查 L2 author_list_snapshot 快照，命中 0 成本，未命中页走合集端点 $0.01/页）；`fetch_user_profile`（主页资料，**进本版 v1.60**——懒触发+TTL 7 天）；`fetch_video_comments`（评论，**进本版 v1.60**——懒触发+TTL 7 天，默认 1 页 20 条）；预留：`fetch_search_channel_videos`（号内搜索，P3 后置）。
 - **数据获取服务层替换**：搜索服务、视频服务、监控器的数据来源从微信客户端改为 `tikhub_client`（+ 红狐 `redfox_client`，双供应商并存、红狐优先）；返回结构做字段映射适配现有数据库模型（作者 username/nickname、视频 id/标题/media/decode_key/createtime、回放同构；红狐字段翻译：findName→username、headUrl→head_url、coverImgUrl→cover_img_url、likeCount/commentCount/favCount/forwardCount→互动数；**v1.59 新增：exportId→author_videos.export_id（TikHub 详情 export_id 直通，兜底下载免反查）、topic→话题列（JSON 数组入库存，本地筛选）、width/height→分辨率列**；短链 get_work_by_link 字段命名第二套 likeNum/commentNum 等**不接**，只取 exportId/直链相关）。
 - **下载链路（v1.39 修正：红狐直链优先）**：**主链路=红狐 videoUrl 直链直接下载**（`get_user_works`/`get_work` 返回，已实测未加密可播，无需解密）；**兜底链路=TikHub media `full_url` + 同响应 `decode_key` 本地解密**（红狐直链失效/贴单视频链接时）；复用现有 task 模块（任务表/进度/状态/WebSocket），url 取红狐 videoUrl 或 TikHub full_url（官方已拼 url+url_token），key 取同响应 decode_key（**必须同响应配对**，仅 TikHub 链路需要）。
 - **解密环节（v1.40 修订：Python 内嵌，移除 Go/Docker）**：解密算法=decode_key → Isaac64 PRNG → 131,072 字节密钥流 → 对视频前 128KB 做 XOR（社区公开；参考 Evil0ctal/WeChat-Channels-Video-File-Decryption 纯 Python CLI `decrypt_wechat_video_cli.py` + 本地验证样本 `D:\dev\wechat-decrypt\...\wx_encrypted.mp4` / `wx_response.json`）；decode_key 按字符串存、与 media 同响应落库、短 TTL（分层失效），不进 L5 去重键；**不引入 Go 进程、不引入 Docker、不依赖外部黑盒**（v1.40 拍板）。
 - **微信连接探测替换（v1.56 拍板：状态卡片规格）**：原"探测微信是否连接"改为**双供应商状态卡片**——红狐、TikHub 各一行独立状态徽标（正常/异常）+ 错误原因一句话（401=Key 失效 / 402=欠费 / 429=限流 / 5xx=上游故障）+ **当前生效链路标注**（红狐为主，熔断切换时跟随）；**不显示余额数字**（两家上游均无余额查询 API，硬做只能编）；**刷新=启动时探测一次（TikHub 走官方计价接口 calculate_price、红狐走 search_users 顺带）+ 业务调用出错实时更新**，不做定时轮询（省成本，正常常绿不花钱、出错立即变红）；异常时给**「打开后台查看/充值」跳转入口**（user.tikhub.io / 红狐控制台）；**逆向余额接口=后续可选增强不排期**（浏览器自动化抓后台接口技术上可行，但=黑盒依赖，页面改版需重抓；阶段二商业化需要精确余额监控时再做）；前端状态卡片位置沿用原"微信连接状态"卡片位。
 - **监控频率重设计**：原 30 分钟轮询按 TikHub 计价不可行（10 作者 × 48 次/天 ≈ $144/月）；改为**打开界面即同步 + 标星作者每天 2 次兜底（v1.22）**，增量只拉第一页对比 `createtime`，预计 2 作者 × 每天 2 次 ≈ $1.2/月。
-- **成本记录**：每次 TikHub 调用写一条调用日志（端点、参数摘要、耗时、计费预估），支持对账与异常放大检测。
+- **成本记录**：每次上游调用（红狐/TikHub）写一条调用日志（端点、参数摘要、耗时、计费预估），支持对账与异常放大检测。
 - **密钥与供应商**：`TIKHUB_KEY`（密钥库实际名，非契约占位 `TIKHUB_API_KEY`，2026-10-27 已核验 len=60）经 server-secrets 存储；按供应商契约纪律：先用新户赠额（约 $0.05）测通 → 充最小 $5 → 稳定后再加额（不退款红线，严禁一次大额）。
 - **双供应商互备（v1.39 拍板，取代旧"双数据源开关"）**：红狐为主链路、TikHub 为备用链路（同功能红狐优先、失败自动切换）；**微信通道已移除（v0.8 拍板），不存在"微信/TikHub 通道切换"**。
 
@@ -1412,7 +1414,7 @@ CREATE TABLE IF NOT EXISTS billing_config (
 | 2 | 监控频率 | **已拍板（v1.22）打开即同步 + 标星低频兜底**：①打开下载器主页 = 0 成本，读本地库显示快照（不刷任何作者）；②点开作者 = 惰性刷新（L2 判断，过期才 $0.01 单作者，不过期 0 成本）；③标星监控作者 = 每天 2 次兜底（默认少，≈$0.6/月/作者）；④可选增强：主页计数旁标注"X 小时前更新"（快照语义可观测性）。原 30 分钟轮询 ≈$144/月 否决；"打开就全刷所有作者"否决（10 作者=$0.1/次） | 成本可控（惰性+低频+收敛监控对象） | ✅ 已拍板（进本版） |
 | 3 | 下载引擎 | **已拍板（v1.21）自研直链下载模块**：弃用 `wx_video_download`（接口文档实锤 `channels.available` 依赖证书安装=微信生态绑定，微信升级即失效，且为黑盒外部依赖）；弃用 TikHub 官方下载器（README 实锤仅支持 TikTok/抖音、**无微信视频号**，且 **GPL v3** 传染性协议冲突商业化）；**最终方案：后端拿 full_url 直链直接 HTTP 下载**（实测 CDN 206 可下，带浏览器 UA），复用现有 task 模块（任务表/进度/状态不变）+ L5 文件校验（file_validator），全链路 0 微信依赖、0 GPL 风险 | 下载链路改造（新增直链下载逻辑，弃用 2022 端口） | ✅ 已拍板（进本版） |
 | 4 | 增强端点 | **合集已进本版（v1.54 拍板，TikHub 专属）；合集列表缓存搭 L2 顺风车（v1.55 拍板：随 author_list_snapshot 同取同存同过期，TTL=120min，边际成本 0）**；**评论 + 主页资料已进本版（v1.60 拍板，用户"接呗全接上"：懒触发 + TTL 7 天，风控已解除实测 200）**；号内搜索（fetch_search_channel_videos）仍后置 P3 | 范围 | ✅ 已拍板（除号内搜索） |
-| 5 | **前端旅程对齐 TikHub 端点粒度（非聚合接口）** | **已拍板（v1.19）三路径并存**：①「我的作者」主页（已存作者，读本地库 0 成本秒开，老数据兼容）→ 点击直达 + L2 自动拉列表；②搜索关键词 → 点开自动入库 + 自动拉列表（L4 缓存）；③导入链接为**可选辅助入口**（非主路径，走 L1 短号映射）。被省的=同步配置弹窗/4 步进度条/手动同步按钮（数据后台自动刷新）。后端仅薄适配（不做聚合接口）：fetch_channel_id_to_username、fetch_user_videos、fetch_live_history、fetch_video_detail 一一暴露为内部路由 | 成本：首次全量 ≈ $0.02–0.03/作者、过期增量 $0.01/次（L2 已缓存）；搜索同词 24h 内 0 成本 | ✅ 已拍板（进本版） |
+| 5 | **前端旅程对齐 TikHub 端点粒度（非聚合接口）** | **已拍板（v1.19）三路径并存**：①「我的作者」主页（已存作者，读本地库 0 成本秒开，老数据兼容）→ 点击直达 + L2 自动拉列表；②搜索关键词 → 点开自动入库 + 自动拉列表（L4 缓存）；③导入链接为**可选辅助入口**（非主路径，走 L1 短号映射）。被省的=同步配置弹窗/4 步进度条/手动同步按钮（数据后台自动刷新）。后端仅薄适配（不做聚合接口）：~~fetch_channel_id_to_username~~（v1.79/80 已 400 移出）、fetch_user_videos、fetch_live_history、fetch_video_detail 一一暴露为内部路由 | 成本：首次全量 ≈ $0.02–0.03/作者、过期增量 $0.01/次（L2 已缓存）；搜索同词 24h 内 0 成本 | ✅ 已拍板（进本版） |
 
 ## Further Notes
 
