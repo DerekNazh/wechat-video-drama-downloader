@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.10 B1-B5+B9 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 + API 客户端 B5 + Cookie 支撑 B9 全部落执行级，逐块深入推进中）
+> 状态：v0.11 B1-B5+B8+B9 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 + API 客户端 B5 + 元宝解析 B8 + Cookie 支撑 B9 全部落执行级；剩余 B6/B7/B10）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -358,10 +358,55 @@ wx_channels_download（微信视频号域）
 
 **工作量**：1 个子块（~200 行），0.5-1 天。
 
-### B8 元宝链接解析器——L3（v0.3 新增）
-- POST `yuanbao.tencent.com/api/weixin/get_parse_result`（yuanbao.go:108 实锤）。
-- 作用：share_url → 视频详情直链的**另一条解析通道**（对应号匣 L1 链接解析）。
-- 产出 `core/api/yuanbao_parser.py`；验收：share_url 解析出直链+key。
+### B8 元宝链接解析器——L3（执行级，2026-10-29 落档）
+
+**上游源码**：`pkg/scraper/wxchannels/yuanbao.go`（260 行，逐行读毕）
+
+**核心作用**：B5 `Fetch` 分派中"分享链接通道"的另一半——**`weixin.qq.com/sph/{id}` 链接无法用 ParseFeedURL 解析（无 oid/nid），走元宝 API 解析**。两步管道：元宝解析 share_url → 得 playable_url（含 token/eid）→ 再调微信 get_feed_info 拿完整 feed 数据。
+
+**上游逻辑（逐函数）**：
+- **ParseShareUrl(share_url, cookie)（yuanbao.go:104-164）**：
+  - POST `https://yuanbao.tencent.com/api/weixin/get_parse_result`，payload `{"type":"video_channel_url","url":"<share_url>","scene":1}`（yuanbao.go:107）。
+  - **全量请求头实锤（yuanbao.go:113-143）**：`accept/origin/referer/user-agent(Chrome 148 macOS)/sec-ch-ua/t-userid/x-agentid/x-commit-tag(72282a0d)/x-device-id/x-hy92/x-hy93/x-id/x-instance-id/x-language/x-os_version/x-platform/x-requested-with/x-source/x-web-third-source/x-webdriver/x-webversion(2.69.0)/x-ybuitest` + **cookie（身份凭据）**。
+  - 返回 `ParseResponse{code,msg,data:{wx_export_id,cover_url,author,author_icon,desc,playable_url,author_certification_icon}}`（yuanbao.go:18-32）。
+  - **关键**：这些 x-* 头（x-commit-tag/x-hy92/x-hy93/x-id/x-webversion 等）大概率是**客户端指纹/风控参数**——直接照搬可能失效，需实测（风险点）。
+- **get_feed_info(export_id, general_token)（yuanbao.go:166-211）**：
+  - POST `https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info?_rid=<rid>&_pageUrl=...`，payload `{"baseReq":{"generalToken":"<token>"},"exportId":"<export_id>"}`（yuanbao.go:170-171）。
+  - `_rid` = `generate_rid()`（yuanbao.go:48-55）：hex 时间戳 + "-" + 8 位随机 hex（非 crypto 随机，math/rand）。
+  - Referer 含 token/eid（yuanbao.go:183）；**无需 cookie**（纯 preview API）。
+  - `parse_feed_info_error`（yuanbao.go:75-102）：errCode 非 0 / data.errMsg 非空 → 提取 `plain_text_from_html` 清洗后的错误消息（去 HTML 标签 + html.UnescapeString + 折叠空白，yuanbao.go:57-73）。
+- **FetchVideoProfileWithShareUrl(share_url, cookie)（yuanbao.go:213-248）**——两步管道：
+  1. `ParseShareUrl` → 从 `playable_url` query 提取 `token`（general_token）+ `eid`（export_id）（yuanbao.go:227-230）；缺失仅 warn 不报错（yuanbao.go:231-236，容错）。
+  2. `get_feed_info(export_id, general_token)` → 返回 json.RawMessage（B4 `ChannelsFeedProfileResp` 形状）。
+- **CleanVideoURL(video_url)（yuanbao.go:250-259）**：删除 query 中 `X-snsvideoflag` 参数（微信防重放 flag，直链转存时需清掉）。
+
+**Python 翻写设计**：
+- 模块：`core/protocol/yuanbao.py`（对应 B8 落点；早期 v0.3 要点写过 `core/api/yuanbao_parser.py`——**落 core/protocol/ 与 B5 的 ws_client 同层**，api 层留给 B10 门面）。
+- 函数签名：
+  - `parse_share_url(share_url: str, cookie: str) -> ParseResponse`（httpx POST + 全量头；返回 B4 或本地 dataclass——`ParseData` 6 字段）。
+  - `get_feed_info(export_id: str, general_token: str) -> dict`（httpx POST + `_rid`；返回 dict 给 B4 `ChannelsFeedProfileResp.model_validate`）。
+  - `fetch_video_profile_with_share_url(share_url: str, cookie: str) -> dict`（两步管道，对应 B5 `Fetch` 的 share_url 分支）。
+  - `clean_video_url(video_url: str) -> str`。
+  - `_generate_rid()`：对齐 generate_rid——`format(time.time_ns//1e9, "x")` + 8 位 `secrets.choice` 或 rand 16 进制（**用 secrets 更稳，但为对齐上游行为可先用 rand**）。
+- 依赖：httpx、B4 模型；**复用 B9 `cookie_reader.header_for_domain(".tencent.com")` 取 cookie**（B5 `resolve_sph_cookie` 已封装此逻辑，B8 直接用）。
+
+**与现有代码接入点**：
+- `core/api/routers/base_service.py`（现有 exe 启停）——B8 完成后，分享链接解析路径 `fetch_video_profile_with_share_url` 替代 exe 的同类能力（与 B5/B10 联动）。
+- B5 `ChannelsClient.fetch()` 的 share_url 分支直接调用 B8。
+
+**风险/决策点（重要）**：
+- **x-* 头风控风险**：上游硬编码了 `x-commit-tag=72282a0d`、`x-webversion=2.69.0`、`x-hy92/x-hy93/x-id/x-device-id` 等指纹头（yuanbao.go:125-142）——**这些值会随元宝版本更新失效**（平台侧主动防爬）。翻写策略：**头参数集中成配置常量 + 可覆盖**；实测失效时按"行业通用做法"换新头（对齐偏好"查行业标准+自身约束"）。**不做逆向推导指纹生成算法**（成本高收益低，超出翻写范围）。
+- **cookie 依赖**：元宝 API 强依赖 `.tencent.com` Cookie（B9 提供）；无 cookie → 报"no yuanbao cookie"（B5 resolve_sph_cookie 语义）。
+- **不翻写 headless 浏览器自动化**：用户曾讨论"浏览器自动化找接口"——B8 是**纯 HTTP 解析**（上游已确认可行），不需要浏览器。
+
+**验收细则**：
+1. 用实测分享链接 + `.tencent.com` cookie → `fetch_video_profile_with_share_url` 返回可解析的 feed 数据（exportId 非空，get_feed_info 成功）。
+2. `clean_video_url`：带 `X-snsvideoflag` 的 URL → 参数被删除，其余不变。
+3. 错误路径：无效 share_url / 空 token → 返回明确错误（对齐 parse_feed_info_error 语义）。
+4. 验证命令：`python -m unittest core.protocol.tests.test_yuanbao`。
+5. **注意**：真实链路验收需真实分享链接 + 有效 cookie（运行时/登录态依赖）——单元测试用 mock 响应覆盖解析逻辑，端到端标注"待 B10 联调"。
+
+**工作量**：1 个子块（~200 行 + 单测），0.5-1 天。
 
 ### B9 微信 Cookie 支撑——L3（v0.3 新增）
 - pkg/cookies：HeaderForDomain（读指定域名 cookie）/ 持久化（persistent.go）。
