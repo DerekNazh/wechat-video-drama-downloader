@@ -695,6 +695,14 @@ wx_channels_download（微信视频号域）
 | **流量入口** | **微信手动代理** 127.0.0.1:2023（只影响微信，替代系统代理） | 设一次，下载器统一管理 |
 | **代理进程** | mitmproxy（Python）统一管理，端口 2023 | 无感（下载器拉起/自愈） |
 
+**载体实测锁定（2026-10-29）**：用户确认短剧 = **独立小程序**（微信搜索框搜出小程序、在小程序内观看）→ **C 方案（WebView2 收进软件窗口）不适用**（小程序只能在微信客户端，微信客户端不吃命令行参数，B11 已查证）。→ 流量入口只能在 **A 微信手动代理** / **B 驱动重定向（mitmproxy Local Capture）** 二选一。
+
+**A vs B 决策（2026-10-29 实测定稿，选 A）**：
+- A 微信手动代理：用户设一次（引导+幂等）；**零驱动、零系统级侵入**（纯用户态，与 B11 原则一致）；残留可自愈；售后简单。
+- B mitmproxy Local Capture（`--mode local:WeChatAppEx`）：用户零设置，但 **Windows 底层=WinDivert 驱动 + 每次启动 UAC 提权**（mitmproxy 官方文档/Bugzilla 实锤）；驱动兼容/杀软/蓝屏风险=灾难级售后。
+- **选 A**：驱动+UAC 对普通用户是灾难级，手动设一次代理可引导、一次性；B 的"零操作"优势被"每次UAC"抵消。
+- **B 保留为备选**（若未来实测 A 用户接受度差再评估）。
+
 **CA 安装逻辑（幂等，落 core/sniff/ca_manager.py）**：
 ```
 下载器启动（嗅探首次启用时）：
@@ -705,14 +713,12 @@ wx_channels_download（微信视频号域）
 ```
 
 **实测记录（2026-10-29）**：
-- `certutil -user -addstore "Root"` → 卡住等确认（弹框）
-- PowerShell `Import-Certificate` → 报"此操作中不允许使用 UI"
-- .NET `X509Store.Add` → 卡住等确认（弹框）
-- 结论：**Windows 对 Root 存储有安全保护，零弹窗不可行**；行业标准（Fiddler/Charles/mitmproxy）= 首次弹一次，幂等跳过。
+- CA 安装：`certutil -user -addstore "Root"` / `Import-Certificate` / `.NET X509Store.Add` 三种方式全部弹一次确认框（Import-Certificate 直接报"此操作中不允许使用 UI"）——**Windows 对 Root 存储有安全保护，零弹窗不可行**；行业标准（Fiddler/Charles/mitmproxy）= 首次弹一次，幂等跳过。
+- C 方案底座：WebView2 单实例代理重跑 PASS（22 条请求全走代理/系统代理未动）；`channels.weixin.qq.com/web/pages/feed` HTTP 200 可达——**但短剧载体锁定为独立小程序，C 不适用**。
 
 **与一期 B11 的关系**：
 - 一期 B11：WebView2 单实例代理（`--proxy-server=http://127.0.0.1:2023`），零证书零驱动——视频号网页版数据走 WS 桥，不需要 MITM。
-- 二期短剧：**必须 MITM**（嗅探本质=抓包+注入），所以需要 CA + 流量入口。两者**代理端口统一 2023、CA 体系独立于 WebView2**。
+- 二期短剧：**必须 MITM**（嗅探本质=抓包+注入），所以需要 CA + 微信手动代理入口。**两者代理端口统一 2023、CA 体系独立于 WebView2**。
 
 ### 6.3 二期 Python 落地映射
 
