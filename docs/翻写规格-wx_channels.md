@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：**v0.17 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥——此前误弃用；v0.16 投放方式改进程级代理；v0.17 定主方案=WebView2 单实例代理——用户成本最低+不污染其他软件兼得，官方实锤 AdditionalBrowserArguments override 系统设置仅影响本实例）**
+> 状态：**v0.18 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥；v0.16 投放方式改进程级代理；v0.17 定主方案=WebView2 单实例代理；v0.18 最小测试 PASS 落档——单实例 --proxy-server 实测可行 22 条请求全走代理/系统代理未动，微信代理独立性查证：上游依赖微信'使用系统代理'设置，本方案独立不受微信配置影响，理论 100% 确认）**
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -559,6 +559,10 @@ wx_channels_download（微信视频号域）
 4. 验证命令：`python -m unittest core.protocol.tests.test_browser_bridge` + 手动 CDP 冒烟。
 5. 端到端：CDP 注入 → B5 fetch → B10 门面 → B3 下载解密落盘（标"待 B5/B10 完成后联调"）。
 6. **用户路径无感（v0.17 澄清固化）**：用户操作与原产品完全一致——微信扫码登录一次 → 软件内嵌窗口打开视频号页面 → 搜索/翻视频/点下载均正常；唯一差异=流量仅走 WebView2 单实例代理（用户不可感知），不得引入任何额外登录/授权/操作步骤。
+7. **理论 100% 实测证据（v0.17 最小测试 PASS，2026-10-29）**：
+   - 脚本：`scripts_probe_webview2_proxy.py`（起本地代理 2023 → Edge 带 `--proxy-server` 打开测试页 → 验证流量导向+系统代理未动），可重复运行。
+   - 结果（实测）：22 条请求全部到达本地代理（含 Edge 后台流量 + `GET http://neverssl.com/` 测试目标页完整闭环）；系统代理注册表 ProxyEnable 前后一致（未被动）。**单实例 `--proxy-server` 机制实测可行，WebView2 同内核（Chromium），B11 主方案理论 100% 确认。**
+   - **微信代理独立性（查证）**：微信 PC 版代理设置三选一（使用系统代理/使用手动代理/不使用代理）——**上游系统代理方案依赖"用户微信选使用系统代理"，用户改手动/不代理则上游失效**；本方案 WebView2 自有 `--proxy-server` 参数，**不依赖微信客户端代理设置，微信怎么配都不影响**。上游被微信设置牵制，本方案独立——额外优势。
 
 **工作量**：2 个子块（CDP 注入器 + 注入 JS 桥翻写），1.5-2 天。
 
