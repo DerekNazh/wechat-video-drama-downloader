@@ -685,23 +685,70 @@ wx_channels_download（微信视频号域）
 
 **资源类型闸门**（resource.go getResType）：all/video/image——前端开关控制，翻写时保留。
 
-### 6.2 代理方案（本规格核心闭环，2026-10-29 实测定稿）
+### 6.2 代理方案（本规格核心闭环，2026-10-29 实测定稿 v2：程序化注入取代手动设置）
 
 **目标**：整个软件告别系统代理（用户拍板）。**三个独立组件**：
 
 | 组件 | 方案 | 用户感知 |
 |---|---|---|
 | **CA 证书**（HTTPS 解密） | 装 Current User\Root（无需管理员） | **检测→弹一次→幂等**（Windows 安全红线：Root 存储必弹一次，行业同） |
-| **流量入口** | **微信手动代理** 127.0.0.1:2023（只影响微信，替代系统代理） | 设一次，下载器统一管理 |
+| **流量入口** | **程序化注入微信 Preferences**（proxy 键 → fixed_servers 127.0.0.1:2023），只影响微信 | **零手动操作**（用户无感：用短剧自动注入、不用自动清除） |
 | **代理进程** | mitmproxy（Python）统一管理，端口 2023 | 无感（下载器拉起/自愈） |
 
-**载体实测锁定（2026-10-29）**：用户确认短剧 = **独立小程序**（微信搜索框搜出小程序、在小程序内观看）→ **C 方案（WebView2 收进软件窗口）不适用**（小程序只能在微信客户端，微信客户端不吃命令行参数，B11 已查证）。→ 流量入口只能在 **A 微信手动代理** / **B 驱动重定向（mitmproxy Local Capture）** 二选一。
+**载体实测锁定（2026-10-29）**：用户确认短剧 = **独立小程序**（微信搜索框搜出小程序、在小程序内观看）→ **C 方案（WebView2 收进软件窗口）不适用**（小程序只能在微信客户端，微信客户端不吃命令行参数，B11 已查证）。→ 流量入口只能在 **A 微信代理** / **B 驱动重定向（mitmproxy Local Capture）** 二选一。
 
-**A vs B 决策（2026-10-29 实测定稿，选 A）**：
-- A 微信手动代理：用户设一次（引导+幂等）；**零驱动、零系统级侵入**（纯用户态，与 B11 原则一致）；残留可自愈；售后简单。
+**A vs B 决策（2026-10-29 实测定稿，选 A，且 A 升级为程序化注入）**：
+- A 微信代理：**零驱动、零系统级侵入**（纯用户态，与 B11 原则一致）；残留可自愈；售后简单。
+  - **A-v1（已弃）**：引导用户手动设一次——仍需用户操作，残留靠自愈。
+  - **A-v2（现定）**：**程序化读写微信 Preferences 的 proxy 键**——用户全程零操作（见下方落点实锤与闭环设计）。
 - B mitmproxy Local Capture（`--mode local:WeChatAppEx`）：用户零设置，但 **Windows 底层=WinDivert 驱动 + 每次启动 UAC 提权**（mitmproxy 官方文档/Bugzilla 实锤）；驱动兼容/杀软/蓝屏风险=灾难级售后。
-- **选 A**：驱动+UAC 对普通用户是灾难级，手动设一次代理可引导、一次性；B 的"零操作"优势被"每次UAC"抵消。
-- **B 保留为备选**（若未来实测 A 用户接受度差再评估）。
+- **选 A-v2**：驱动+UAC 对普通用户是灾难级；程序化注入=零驱动零手动，优于 B 的"零操作但装驱动"。
+- **B 保留为备选**（若 A-v2 实测注入后微信不生效再评估）。
+
+**A-v2 落点实锤（2026-10-29 本机实测，升级依据）**：
+- 微信 4.0（4.1.15.56）内置浏览器为 **Chromium 内核（radium）**，代理配置 = 标准 Chromium Preferences 文件：
+  - 路径：`%APPDATA%\Tencent\xwechat\radium\web\profiles\<用户hash>\Preferences`（**明文 JSON，程序可读写**）
+  - 实锤字段（multitab_xxx 与 webview_xxx 两个 profile 均有）：`"proxy": {"mode":"system","partial_proxy_rules":"","partial_proxy_server":""}`
+  - 微信 GUI 里"设置→网络→代理"本质就是写这个文件——**程序化写入同一文件即可等效**。
+- 相关旁证：`xwechat\config\*.ini` 为明文（实测读出 `D:\wechat\chatdata`）；`net\config.ini` 0 字节（未设置代理时空置）。
+- **Chromium 行为约束（闭环设计依据）**：启动时读 Preferences；**运行时改文件不生效，退出时写回内存值覆盖** → 注入/清除必须在**微信退出后**进行。
+
+**A-v2 闭环状态机（落 core/sniff/proxy_manager.py）**：
+```
+状态：IDLE → INJECTING → ACTIVE → CLEARING → IDLE（+ 自愈兜底）
+
+启用短剧嗅探：
+  IDLE → [微信在运行?] ──是──> 提示"请先退出微信，将自动继续"（阻塞点=唯一用户操作）
+                    └─否──> INJECTING:
+                              ① 备份 Preferences（.bak）
+                              ② 遍历 profiles/*/Preferences 中含 proxy 键的全部文件，
+                                 注入: "proxy": {"mode":"fixed_servers","server":"127.0.0.1:2023"}
+                              ③ 写回校验（读回：json 可解析 + mode==fixed_servers）
+                              → ACTIVE（提示用户打开微信，启动即走代理）
+
+停用/退出下载器：
+  ACTIVE → [微信在运行?] ──是──> 提示退出微信（或等下次微信退出时自动清）
+                   └─否──> CLEARING:
+                             ① 清除 proxy 字段（还原 mode=system 或删键）
+                             ② 写回校验 → IDLE
+
+崩溃自愈（每次启动必做）：
+  扫描 profiles/*/Preferences：
+    发现 proxy.server == 127.0.0.1:2023 且嗅探服务未运行
+      → 判定残留 → 清除 → 微信恢复直连（防微信网页挂）
+```
+
+**A-v2 代码要点**：
+| 点 | 做法 | 理由 |
+|---|---|---|
+| 读写 | Python `json.load` 整个文件 → 改 proxy → `json.dump` 写回 | 保留其他字段，不破坏结构 |
+| 多 profile | 遍历 `profiles/*/Preferences` 中**含 proxy 键**的 | 微信不同场景用不同 profile，漏一个就漏流量 |
+| 写回校验 | 写完读回：json 可解析 + proxy.mode==fixed_servers | 防半截写入搞坏微信 |
+| 备份 | 注入前 `.bak`，清除时用备份还原 | 可逆，出问题一键回滚 |
+| 时机 | **只在微信退出后读写** | Chromium 退出会写回内存值，运行中改=被覆盖 |
+| 权限 | 用户目录读写，无需管理员 | 纯用户态，不碰驱动/系统代理 |
+
+**⚠️ 待实测点（S3 前置，2026-10-29 挂起）**：proxy.server 的确切格式 = `socks5://127.0.0.1:2023` 还是 `http://127.0.0.1:2023`？→ 两种都试：本地起 2023 假代理 → 注入一种格式 → 开微信小程序看流量进不进。**此实测在微信下次方便退出时进行，通过后 A-v2 理论 100% 闭环。**
 
 **CA 安装逻辑（幂等，落 core/sniff/ca_manager.py）**：
 ```
@@ -715,10 +762,11 @@ wx_channels_download（微信视频号域）
 **实测记录（2026-10-29）**：
 - CA 安装：`certutil -user -addstore "Root"` / `Import-Certificate` / `.NET X509Store.Add` 三种方式全部弹一次确认框（Import-Certificate 直接报"此操作中不允许使用 UI"）——**Windows 对 Root 存储有安全保护，零弹窗不可行**；行业标准（Fiddler/Charles/mitmproxy）= 首次弹一次，幂等跳过。
 - C 方案底座：WebView2 单实例代理重跑 PASS（22 条请求全走代理/系统代理未动）；`channels.weixin.qq.com/web/pages/feed` HTTP 200 可达——**但短剧载体锁定为独立小程序，C 不适用**。
+- **A-v2 落点实锤**（见上）：微信 Preferences 明文 JSON、proxy 键结构确认、多 profile 定位（multitab/webview 两个）。
 
 **与一期 B11 的关系**：
 - 一期 B11：WebView2 单实例代理（`--proxy-server=http://127.0.0.1:2023`），零证书零驱动——视频号网页版数据走 WS 桥，不需要 MITM。
-- 二期短剧：**必须 MITM**（嗅探本质=抓包+注入），所以需要 CA + 微信手动代理入口。**两者代理端口统一 2023、CA 体系独立于 WebView2**。
+- 二期短剧：**必须 MITM**（嗅探本质=抓包+注入），所以需要 CA + 微信流量入口（A-v2 程序化注入）。**两者代理端口统一 2023、CA 体系独立于 WebView2**。
 
 ### 6.3 二期 Python 落地映射
 
@@ -759,7 +807,7 @@ wx_channels_download（微信视频号域）
 
 - [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
 - [ ] S2 mitmproxy 基座接入（2023 端口，统一启停管理替代 res_download_service.py）
-- [ ] S3 微信手动代理设置/自愈（127.0.0.1:2023，退出恢复）
+- [ ] S3 **微信 Preferences 程序化注入/清除**（A-v2，proxy_manager.py：闭环状态机 IDLE→INJECTING→ACTIVE→CLEARING+自愈，多 profile 遍历+写回校验+备份还原；**前置实测：proxy.server 格式 socks5:// vs http:// 二选一**——本地起 2023 假代理注入后开小程序验证流量进入，通过后 A-v2 理论 100%）
 - [ ] S4 注入模块（inject.py，qqMediaRegex 逻辑翻写）
 - [ ] S5 上报拦截 + 直链解析（wechat.py，handleWechatRequest/handleMedia 翻写）
 - [ ] S6 与一期 B1/B3/B5 联调（decodeKey 解密链 + WS 下发）
