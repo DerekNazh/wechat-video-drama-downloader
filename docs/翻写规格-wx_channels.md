@@ -847,3 +847,10 @@ wx_channels_download（微信视频号域）
 - [ ] S6 **与一期 B1/B3/B5 联调**（2026-10-29 验收标准落档：端到端链路 小程序点播放→S4注入钩子→type=1上报→S5拦截解析→HTTP回调主应用→入download_tasks→B3解密(decodeKey直喂)→落盘可播放；判据①ffprobe可解析②同视频重复播放去重③S3自愈联动(崩溃重启后残留Preferences被清)④前端进度走现有SSE不新增通道；前置=B1/B3/B5+S2-S5落地+明天实测注入点）
 - [ ] S7 **替换 res_download.exe**（2026-10-29 退役边界落档 v2，审查修正：res_download_service.py 八职责处置=进程管理/端口清理/停止/重启移proxy_manager(对象换mitmdump/PID树/2023), 状态检测改socket 2023, 配置注入(UpstreamProxy/SaveDirectory/OpenProxy/type)作废删(单端口无Upstream, SaveDirectory随回调, type进SniffConfig), 系统代理管理(open/unset/注册表)作废删→A-v2 Preferences替代, 残留自愈改造(2023残留+A-v2残留联动); 全仓引用处置(审查修正版): **base_service.py=wx_video_download管理归一期B系列退役不属S7**; app.py启动关闭换proxy_manager(原"res_download先于weixin_download"顺序依赖消失——因2023由wx_video_download占用,新mitmdump独立监听)且关闭改清Preferences; base_servier.py=wx_video_download服务删转发链概念只留2022; link_status.py巡检改mitmdump单点; **sniff_proxy.py三层处置: 系统级透传(proxy-open/unset/is-proxy/set-config/get-config/set-type/app-info/install/cert/set-system-password)作废删 + 业务级(resources/download/clear/delete/open-folder/preview/drama-metadata/batch-export)改指向主应用新端点 + direct-download保留(独立能力,Python已自下短剧,仅去"转交res_download"分支)**; **关键前提: 2023端口当前由wx_video_download.exe内部代理监听(base_servier.py:64-74实锤), mitmproxy接管2023前提=一期B系列完成wx_video_download退役→二期启动条件=一期完成**)）
 
+### 6.6 前端信息架构改造（2026-10-29 拍板：侧边栏+统一壳，分两阶段）
+
+> **现状问题（index.html 实锤）**：①导航=顶部悬浮Tab（鼠标悬停顶部8px才弹出、移开500ms隐藏）——可发现性差；②短剧=整页 iframe 覆盖（`<iframe src="/static/sniff/index.html">`）——res-downloader 整套前端独立导航/样式/状态，与主应用 SPA 零互通；③iframe 是过渡态产物——S6/S7 翻写完成后 res_download.exe 退役，iframe 无后端可嵌，必退役。
+> **行业标准（有据）**：Windows 导航基础=少数组对等页面用对等结构；WinUI NavigationView=侧边导航是 Windows 桌面应用事实标准（VS Code/Teams/Figma）；SideNav vs TopNav=复杂产品多区块最佳=侧边栏；SaaS/Dashboard 设计指南=多模块工具必须侧边栏。顶部 tab 仅在顶层目的地少且内容文档化时用，且绝不能隐藏。
+> **阶段A（过渡期·低改造成本）**：隐藏悬浮Tab → 固定左侧侧边栏（图标+文字：视频号/短剧/设置），设置从右上角齿轮挪进导航；短剧 iframe 先保留（res_download.exe 还在）。
+> **阶段B（随 S6/S7 落地）**：短剧 iframe 退役 → 主应用内建"短剧嗅探"页；嗅探回调本来就入 download_tasks（S5 设计）→ 短剧资源=任务 → 统一任务列表/进度(SSE)/下载目录/设置；统一壳=状态面板FAB/日志面板/SSE断连横幅/同主题全模块共用；任务视图加来源筛选（视频号/短剧）。
+
