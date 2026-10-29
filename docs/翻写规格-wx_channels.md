@@ -95,8 +95,14 @@ wx_channels_download（微信视频号域）
 
 ### B1 解密核心（ISAAC-64）——L0 首块
 - 算法：golden=0x9e3779b97f4a7c13，256 状态，4+2 轮 mix，8 字节大端 keystream，前 encLen 字节 XOR。
-- 依赖仅 encoding/binary。号匣已有 Python 版（v1.70 实测）→ 逐行对照验证等价。
-- 产出 `core/decrypt/isaac64.py`；验收：同 key 前 8 keystream 一致 + 实测文件可播。
+- 依赖仅 encoding/binary。号匣已有 Python 版（scripts_probe_python_decrypt.py，v1.70 实测 ftyp+ffprobe 通过）→ **算法级已 100% 完成**。
+- **生产级缺口（2026-10-29 实测发现）**：master `core/**` 无任何解密实现（grep isaac/decrypt 为空）；`core/service/task.py` 下载链路仍依赖 **127.0.0.1:2022 Go 后端**（`WechatVideoAPIClient(base_url="http://127.0.0.1:2022")`），解密在 Go 侧。**B1 翻写=把验证脚本升格为生产模块并接入下载链路，摆脱 Go 依赖。**
+- 产出 `core/decrypt/isaac64.py`（生产模块，由验证脚本升格）+ 下载链路接入（本地解密替代 Go 后端任务）。
+- 验收标准（完整）：
+  1. 算法等价：同 key 前 8 keystream 与 Go 一致 + 实测文件可播（已过）；
+  2. 生产模块化：`core/decrypt/isaac64.py` 为正式模块（非 scripts 脚本），纯 Python 无外部依赖；
+  3. 链路接入：号匣下载任务**不经 Go 后端**完成"下载+解密+落盘"，输出可播放文件；
+  4. 单元测试：keystream 序列回归 + 样本文件解密断言。
 
 ### B4 数据结构——L0（与 B1 并行）
 - types.go 全量模型（feed/作者/直播/评论 30.7KB）+ util.go。
