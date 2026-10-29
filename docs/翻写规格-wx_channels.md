@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.12 B1-B6+B8+B9 执行级 · 2026-10-29（解密链/数据结构/API客户端/元宝/Cookie/接口清单全部落执行级；剩余 B7/B10）
+> 状态：v0.13 B1-B9 执行级 · 2026-10-29（解密链/数据结构/API客户端/元宝/Cookie/接口清单/状态机全部落执行级；剩余 B10）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -475,10 +475,65 @@ wx_channels_download（微信视频号域）
 - **产出**：`core/api/wxchannels_service.py`（业务门面：统一方法 + 响应后处理管道）。
 - **验收**：与红狐/TikHub 同场景输出字段可比对一致；含全部 6 个对外方法。
 
-### B7 下载任务状态机——L4
-- download_task.go（115.9KB）+ handler_download_task.go（60.4KB）+ **handler_download_task_ws.go（26.4KB，进度推送）**+ download_task_delete/view.go。
-- **不整块翻**：号匣已有 YZPQ-307 状态机设计 → 差异比对补缺口（含 WS 进度推送是否纳入号匣）。
-- 产出：差异报告 + YZPQ-307 补充项。
+### B7 下载任务状态机——L4（执行级，2026-10-29 落档）
+
+**上游源码**：`internal/services/download_task.go`（115.9KB，状态机核心）+ `handler_download_task_ws.go`（26.4KB，WS 进度推送）+ `internal/database/model/download_task.go`（状态枚举）。
+
+**定位（重申）**：**不整块翻写**——号匣主线已有 **YZPQ-307 状态机设计**（PingCode 票 id=6ae2c04b02e3c5c7ad768200，8 态：pending/downloading/paused/completed/failed/cancelled/interrupted/expired）。B7 产出 = **差异比对报告 + YZPQ-307 补充项**，用上游实现校验号匣设计闭环性。
+
+**上游状态枚举（实锤，model/download_task.go:10-19）**：
+
+| 值 | 上游态 | 号匣 YZPQ-307 | 差异判定 |
+|---|---|---|---|
+| 0 | Waiting | pending | 仅命名不同，语义一致 |
+| 1 | Preparing | —（无此态） | 上游有、号匣无：号匣直链单文件下载无"准备"独立阶段 |
+| 2 | Downloading | downloading | 一致 |
+| 3 | Paused | paused | 一致 |
+| 4 | Merging | —（无此态） | 上游有、号匣无：分段合并是 gopeed 多段下载产物，号匣单流直链无合并 |
+| 5 | Finished | completed | 仅命名不同 |
+| 6 | Failed | failed | 一致 |
+| 7 | Cancelled | cancelled | 一致 |
+| — | — | interrupted | **号匣有、上游无**：本地应用单实例锁 + 优雅退出落 interrupted（YZPQ-312）；上游常驻服务无需此态 |
+| — | — | expired | **号匣有、上游无**：直链 TTL 过期（实测约 10 天）；上游下载中 403 直接刷新重试、无独立态 |
+
+**上游操作约束（实锤，download_task.go）**：
+- `StartTask(1077)`：仅 Waiting/Paused/Failed 可启动（1087-1090）→ Preparing(1101)。
+- `PauseTask(1106)`：仅 Preparing/Downloading 可暂停（1116-1117）→ Paused(1140)；**直播收尾检查**（1127-1132）：直播录制收尾后状态非 Finished → 报错不暂停。
+- `ResumeTask(1145)`：仅 Paused 可恢复（1155-1156）→ Preparing(1166)。
+- `RetryTask(1172)`：仅 Failed/Cancelled 可重试（1184-1185）→ Waiting(1196) → Preparing(1203)。
+- `CancelTask(1209)` / `DeleteTask(1220)` / `StartAllTasks(1307)` / `PauseAllTasks(1345)`。
+- **去重阻塞状态** `duplicate_blocking_task_statuses`（185-190）：Waiting/Preparing/Downloading/Paused/Merging —— 同一 unique_id 已有这些状态 → `DuplicateTaskError` 不新建（幂等锁语义）。
+
+**WS 进度推送（handler_download_task_ws.go 26.4KB）**：上游 Go 服务经 `ws://127.0.0.1:2022/ws/downloader` 推 `type=event / batch_tasks` 进度。**号匣不翻写 WS**：号匣 Python 后端直连前端，进度走既有 SSE 通道（`task_progress` 事件，Spec.md §SSE + `core/api/routers/sse.py`）——WS 是上游"常驻服务→前端"架构的产物，号匣无此拓扑。
+
+**差异比对结论（B7 核心产出）**：
+1. **上游 Preparing/Merging 两态号匣不要**：直链单文件下载 + Python 内嵌解密，无独立准备阶段、无分段合并——号匣 `downloading` 覆盖。
+2. **号匣 interrupted/expired 两态是必要增强**（上游没有）：
+   - `interrupted`：单实例锁 + 优雅退出（YZPQ-312），进程被杀/退出落 interrupted，重启后校验续传或删除。
+   - `expired`：直链 TTL 过期（L3 链接列，实测 10 天量级）——承接"链接失效但任务未完成"语义，触发 `ensure_valid_url` 刷新（Spec.md:527 下载中 403 → 刷新重试）。
+3. **幂等锁对齐**：号匣 Spec.md:642"同一 video_id 已有 running 任务 → 返回现有任务"与上游 duplicate_blocking 语义一致——**差异：上游按 unique_id，号匣按 video_id**；B4 已对齐 video_id=object_id（64 位大整数字符串），需确认号匣任务去重键唯一性。
+4. **两层衔接**：Spec.md:635-638 下载入口三态（is_downloaded 0/1 + 文件有效性）是**前端/入口层**；B7 状态机是**后端任务层**——两层通过 download_tasks 表状态互查衔接，不混层。
+
+**落点/接入点**：
+- 号匣 `core/service/task.py`（现状走 create2 链路）——B3 落地后下载执行器切 `core/service/downloader.py`（Spec.md:630-631），8 态流转 + 落库 `download_tasks`（表结构不动，Spec.md:685）。
+- `resume_states` 表承接断点续传（YZPQ-308，Range 续传 + .part + Content-Length 字节对齐）。
+- 前端 SSE `task_progress` 已存在，无新增通道。
+
+**风险/决策点**：
+- **interrupted vs paused 恢复路径不同**：paused=用户主动暂停→直接续传；interrupted=异常中断→恢复前先校验 .part 完整性 + 直链新鲜度（可能需刷新），不混同。
+- **expired 防死循环**：下载中 403/404 → 转 expired → ensure_valid_url 刷新（B4/L3 链接列）→ 成功回 downloading / 失败 → failed。**刷新重试次数上限 = 1 次**，超过即 failed（防无限循环）。
+- **直播任务收尾检查**（上游 1127-1132）：号匣直播回放下载收尾后状态校验——保留。
+- **CancelTask 的 .part 清理**：取消后删除未完成 .part 或标记续传候选——由 YZPQ-308 定，B7 只定义 cancelled 终态语义。
+
+**验收细则**：
+1. 8 态全量转换矩阵单测：合法迁移全过、非法迁移全拒（如 completed 后再 Start → 拒绝）。
+2. 幂等锁：同一 video_id 并发创建 → 仅 1 个任务（对齐上游 DuplicateTaskError 语义）。
+3. interrupted 模拟：杀进程重启 → 落 interrupted → 恢复校验续传。
+4. expired 模拟：下载中 mock HTTP 403 → 刷新 1 次成功 → 回 downloading；刷新失败 → failed。
+5. 验证命令：`python -m unittest core.service.tests.test_task_state_machine`。
+6. **差异报告落档**：`docs/B7状态机差异报告.md`（上游 8 态 ↔ 号匣 8 态映射表 + 决策理由），并向 YZPQ-307 票补充本报告摘要。
+
+**工作量**：差异报告 0.5 天 + 状态机实现（8 态流转 + 落库 + 单测）1-2 天（归 YZPQ-307，号匣主线）。
 
 ## 三、弃用边界（明确不做，防缺漏假象）
 
