@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：**v0.14 B1-B10 全部执行级 · 2026-10-29（翻写规格全量收口）**——解密链/数据结构/API客户端/元宝/Cookie/接口清单/状态机/业务门面全部落执行级
+> 状态：**v0.15 B1-B11 全部执行级 · 2026-10-29（翻写规格全量收口；v0.15 补 B11 浏览器注入桥——此前误弃用，B5 WS 桥的页面侧数据来源，用户质疑触发核查实锤）**
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -76,15 +76,17 @@ wx_channels_download（微信视频号域）
 │   └── B10 业务适配门面               adapter/wxchannels/* (adapter+postprocess 110KB+)  L4 依赖B3+B5
 ├── 【翻写】链接解析
 │   └── B8 元宝链接解析器             yuanbao.go         独立  L3
+├── 【翻写】浏览器注入桥（v0.15 补——此前误弃用，B5 命根子）
+│   └── B11 注入 JS + 投放方式        frontend/inject/* 94KB + static_asset.go  L3 依赖B5
 ├── 【参考】协议与逆向
 │   ├── B6 JS 逆向解析器              interceptor.go    24.6KB  独立  (只产接口清单)
 │   └── B9 微信侧 Cookie 支撑         pkg/cookies/*      14.9KB  支撑B5
 ├── 【对齐】业务层
 │   └── B7 下载任务管理                download_task*.go + handler 176KB+  对齐号匣 YZPQ-307
-├── 【弃用】注入/代理（号匣不实现）
-│   ├── (弃) internal/interceptor/*    Sunny代理 MITM    34KB
-│   ├── (弃) pkg/certificate/*         证书生成/安装       22KB
-│   ├── (弃) frontend/inject/*         页面注入 JS        94KB
+├── 【弃用】代理/证书/UI（号匣不实现，投放方式另选）
+│   ├── (弃) internal/interceptor/*    Sunny代理 MITM    34KB   (注入逻辑已在B6/B11翻写，仅弃MITM具体实现)
+│   ├── (弃) pkg/certificate/*         证书生成/安装       22KB   (CDP注入无需证书)
+│   ├── (弃) frontend/inject model.js+view.js 下载面板UI 119+80KB (号匣自研WebView2前端，注入JS本体B11翻写)
 │   └── (弃) internal/workers/*        Cloudflare worker  部署层
 ├── 【评估】内容与任务服务
 │   ├── (评) content.go + data_query.go  内容查询/展示    81KB  与号匣DB重叠，评估复用字段
@@ -110,6 +112,7 @@ wx_channels_download（微信视频号域）
 | 8 | L3 | **B6** | JS 逆向接口清单 | interceptor.go | 独立 | P2 |
 | 9 | L4 | **B10** | 业务适配门面 | adapter/wxchannels/*（110KB+） | B3+B5 | P1 |
 | 10 | L4 | **B7** | 下载任务状态机 | download_task*.go+handler | B3 | P2 |
+| 11 | L3 | **B11** | 浏览器注入桥（v0.15 补） | frontend/inject/*（94KB）+ static_asset.go | B5 | P1 |
 
 ## 二、各块要点
 
@@ -510,6 +513,51 @@ wx_channels_download（微信视频号域）
 
 **工作量**：2-3 个子块（门面 7 方法 + 响应后处理管道 + 输入归一化 + 单测），2-3 天。
 
+### B11 浏览器注入桥——L3（执行级，2026-10-29 补档——此前误弃用，B5 命根子）
+
+**上游源码**：`frontend/inject/*`（JS 资产 94KB，注入内容）+ `frontend/static_asset.go`（静态资产服务）+ `pkg/scraper/wxchannels/assets.go`（资产挂载）+ `interceptor.go` plugin_1/2（投放机制，已读）。
+
+**为什么补这块（用户质疑触发，核查实锤）**：
+- B5 `client.go` 的 WS 桥（client.go:135-203 ServeWebsocket）是**服务端**：它等浏览器连上来发 `api_call` 请求。**浏览器侧必须有注入的 JS 才会连 WS、才会调页面内的 finder* 接口**——没有注入 JS，B5 就是空壳。
+- 上游官方用法（README 实锤）：首次运行自动装证书 → 启动 Sunny 代理 → 拦截 `channels.weixin.qq.com` HTML + `res.wx.qq.com` JS → 改写注入 `<script src="/__assets/wxchannels/inject/...">` → 注入 JS 建 WS 连本地。
+- 之前规格把 frontend/inject 标"弃用（号匣自研 WebView2 前端）"是**错误的架构套用**（master 号匣走红狐/TikHub API 才零注入；wechat-downloader 零成本版必须从页面拿数据，注入不可少）。**v0.15 修正**。
+
+**上游逻辑（逐模块）**：
+- **注入 JS 资产（frontend/inject，94KB，核心内容）**：
+  - `channels.ws.js`（WS 桥核心）：页面内建立 WebSocket → 连本地 `/ws/channels` → 处理 `api_call` 消息 → 调 `window.__channels_api__`（页面 JS 暴露的 finder* 函数）→ 回包按 id 匹配。
+  - `channels.events.js` / `channels.utils.js`：WXU 事件桥 + 工具（decodeBase64ToUint64String 等，B4 已翻写）。
+  - `channels.home.js` / `channels.feed.js` / `channels.live.js` / `channels.profile.js`：按页面（home/feed/live/profile）注入的页面逻辑。
+  - `eventbus.js` / `utils.js` / `components.js` / `model.js`（119KB）/ `view.js`（80KB）/ `panel.js` / `fetch.js` / `file.js`：下载面板 UI + 业务——**UI 部分号匣不翻**（号匣自研 WebView2 前端）。
+- **静态资产服务（frontend/static_asset.go:20-135）**：`MockStaticAsset` 供给 `/__assets/public|inject|src` + **用户全局脚本 `/__assets/user/global.js`**（GlobalScriptPath 机制，static_asset.go:64-67 + config.go:894 `inject.globalScript`）——**这是免 MITM 的第二条投放路**（用户手动/自动化把 JS 放进浏览器）。
+- **投放方式（interceptor.go plugin_1/2，已读）**：MITM 改写 HTML 注入 script 标签 + 改写 res.wx.qq.com JS 包装 finder* 接口。
+
+**翻写取舍（B11 决策）**：
+1. **注入 JS 内容必翻**（channels.ws.js 桥 + channels.utils.js/events.js 桥接部分）——数据命根子，Python 侧无法替代（必须在浏览器页面环境里跑 JS）。
+2. **投放方式选型：不用 MITM 代理 + 证书**——零成本版用**浏览器自动化（CDP 注入）**：打开已登录微信视频号页面的浏览器（Playwright/pywebview WebView2）→ `Page.addScriptToEvaluateOnNewDocument` 注入 JS 桥 → 页面自动连 B5 WS 服务。**免证书、免代理、免管理员权限**。
+   - 备选投放路：GlobalScriptPath 手动注入（上游 static_asset.go 实锤支持）——用户手动把 global.js 粘贴进浏览器控制台。
+3. **UI 不翻**：model.js/view.js/panel.js/components.js（下载面板 219KB）不翻——号匣自研 WebView2 前端已覆盖 UI（原"自研前端"理由对 UI 成立，对注入桥不成立）。
+
+**落点/接入点**：
+- `core/protocol/browser_bridge.py`（CDP 注入器：打开已登录页面 + 注入 JS 桥 + 心跳/重连）。
+- `core/static/inject/channels.ws.js` 等（翻写后的注入 JS，全新命名不照抄）。
+- 与 B5 配对：B5 `ServeWebsocket` 是服务端（core/protocol/ws_client.py 反向——**B5 的 ws_client 是客户端还是服务端需对齐**：上游 client.go 是服务端 ServeWebsocket，浏览器是客户端连上来；Python 侧 FastAPI 提供 `/ws/channels` 端点 + 注入 JS 作为浏览器侧客户端）。
+- 浏览器容器：号匣已有 pywebview 6.2（WebView2）——**可选**：用 pywebview 打开已登录页面（复用登录态）或外接用户已开的 Chrome（CDP 远程调试）。
+
+**风险/决策点**：
+- **微信前端改版**：finder* 接口签名/JS 变量名变化 → 注入 JS 失效（B6 清单联动维护，同 B8 x-* 头风险）。
+- **CDP 注入被页面 CSP 拦**：需实测；备选手动注入（global.js）。
+- **登录态时效**：cookie 失效需重新登录（B9 的 cookies.json 持久化可复用）。
+- **播放器/下载面板不做**：注入 JS 只负责"数据桥"（WS 往返），不负责页内 UI。
+
+**验收细则**：
+1. 已登录浏览器（CDP）→ 注入 JS 桥 → B5 WS 服务收到连接 → `api_call` 往返成功（fetch 出真实 feed 数据）。
+2. 注入 JS 不改变页面原有行为（无 UI 注入、无 DOM 干扰）。
+3. 断线重连：WS 断开 → 自动重连 + 未完成请求按 id 重发（对齐上游 requests map 语义）。
+4. 验证命令：`python -m unittest core.protocol.tests.test_browser_bridge` + 手动 CDP 冒烟。
+5. 端到端：CDP 注入 → B5 fetch → B10 门面 → B3 下载解密落盘（标"待 B5/B10 完成后联调"）。
+
+**工作量**：2 个子块（CDP 注入器 + 注入 JS 桥翻写），1.5-2 天。
+
 ### B7 下载任务状态机——L4（执行级，2026-10-29 落档）
 
 **上游源码**：`internal/services/download_task.go`（115.9KB，状态机核心）+ `handler_download_task_ws.go`（26.4KB，WS 进度推送）+ `internal/database/model/download_task.go`（状态枚举）。
@@ -574,9 +622,9 @@ wx_channels_download（微信视频号域）
 
 | 上游模块 | 理由 |
 |---|---|
-| internal/interceptor（Sunny MITM 代理） | 号匣纯 API 零注入零代理 |
-| pkg/certificate（根证书生成/安装） | 无 MITM 即无证书需求 |
-| frontend/inject（页面注入 JS 94KB） | 号匣自研 WebView2 前端 |
+| internal/interceptor（Sunny MITM 代理实现） | **弃 MITM 具体实现**，注入逻辑已在 B6（接口清单）/B11（CDP 投放+JS 桥）翻写——零成本版用浏览器自动化注入，不装证书不挂代理 |
+| pkg/certificate（根证书生成/安装） | 无 MITM 即无证书需求（CDP 注入免证书） |
+| frontend/inject 的 UI 部分（model.js/view.js/panel.js/components.js 219KB） | 号匣自研 WebView2 前端覆盖 UI；**注入 JS 本体（ws/events/utils 桥）由 B11 翻写** |
 | internal/workers（Cloudflare worker） | 部署层，号匣本地应用不需要 |
 
 ## 四、执行纪律
@@ -597,6 +645,7 @@ wx_channels_download（微信视频号域）
 - [ ] **B5** API 客户端（依赖 B4+B9）
 - [ ] **B8** 元宝解析器（独立）
 - [ ] **B6** JS 逆向接口清单（独立）
+- [ ] **B11** 浏览器注入桥（依赖 B5；CDP 注入 + JS 桥翻写）
 - [ ] **B10** 业务适配门面（依赖 B3+B5）
 - [ ] **B7** 状态机差异比对（依赖 B3）
 - [ ] 评估项：content/data_query、scraper_job、cache、events/hermes、database-model 对照（不阻塞，深入时再看）
