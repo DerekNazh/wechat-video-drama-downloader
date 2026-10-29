@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.13 B1-B9 执行级 · 2026-10-29（解密链/数据结构/API客户端/元宝/Cookie/接口清单/状态机全部落执行级；剩余 B10）
+> 状态：**v0.14 B1-B10 全部执行级 · 2026-10-29（翻写规格全量收口）**——解密链/数据结构/API客户端/元宝/Cookie/接口清单/状态机/业务门面全部落执行级
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -469,11 +469,46 @@ wx_channels_download（微信视频号域）
 
 **工作量**：1 个子块（~150 行清单 + 比对逻辑），0.5-1 天。
 
-### B10 业务适配门面——L4（v0.4 新增）
-- `internal/adapter/wxchannels/adapter.go`（12.8KB）+ **postprocess.go（98.3KB）**+ model.go（51.6KB）+ routes.go（12.8KB）。
-- **作用**：B5 客户端方法（SearchChannelsContact/FetchChannelsFeedListOfContact/FetchChannelsLiveReplayList/FetchChannelsFeedProfile/FetchChannelsFeedCommentList/FetchChannelsFeedShareUrl）的业务封装 + **响应后处理（postprocess）**——把微信原始响应清洗/裁剪/重组成对外统一模型，是全仓最大单文件之一。
-- **产出**：`core/api/wxchannels_service.py`（业务门面：统一方法 + 响应后处理管道）。
-- **验收**：与红狐/TikHub 同场景输出字段可比对一致；含全部 6 个对外方法。
+### B10 业务适配门面——L4（执行级，2026-10-29 落档）
+
+**上游源码**：`internal/adapter/wxchannels/` 四件套——adapter.go（12.8KB）+ model.go（51.6KB）+ routes.go（12.8KB）+ postprocess.go（98.3KB，全仓最大单文件），全部逐行读毕。
+
+**上游架构（四件套分工实锤）**：
+- **adapter.go（薄门面）**：`ChannelsAdapter` 实现 8 个适配器接口（PlatformAdapter/RuntimeAdapter/Postprocessor 等），7 个业务方法**全部转发 B5 client**（SearchChannelsContact/FetchChannelsFeedListOfContact/FetchChannelsLiveReplayList/FetchChannelsFeedProfile/FetchChannelsFeedCommentList/FetchChannelsFeedShareUrl/Fetch），本身无逻辑（adapter.go:86-176）。平台状态 2 键：`wxchannels:page`（视频号页面连接）+ `wxchannels:sph`（分享链接 cookie）。
+- **model.go（清洗转换层，B10 真正价值）**：把微信原始响应转成对外模型——
+  - `ToAccount`（211-233）：ChannelsObject → model.Account（昵称/签名/头像）。
+  - `ToContent`（247-373）：→ model.Content + 扩展（直播/图片/视频三型分派，Type=live/album/video）。
+  - `BuildDownloadTask`（731-988）：**B10 心脏**——content_json → 下载任务 + 资源四元组（Task/Resources/Account/Content）。三分支：直播（LiveCdnUrl 校验，749/754）、图片（每图一资源 + BGM，820-912）、视频（下载 URL + 解密 extra，914-987）。
+  - `parse_channels_object_for_download`（1167-1192）：**输入归一化**——依次尝试 ChannelsObject 直解 → feed_profile 响应（ErrCode≠0 报错）→ 分享 profile 转换（shared_feed_profile_to_channels_object，1204-1220，视频/图片分派）。
+  - 辅助：`clean_media_url`（删 CDN 路由参数 hy/idx/m/uzid，44-56）、`BuildDownloadURLWithSpec`（642）、`build_resource_extra_json`（1482，含 decode_key）、`BuildDownloadTaskUniqueID`（1464）、`sanitize_filename` 族、`format_bgm`（1442）。
+- **routes.go（18 个 HTTP 端点）**：`/api/channels/status|parse_sph|decrypt|contact/search|contact/feed/list|feed/profile|live/profile|live/replay/list|interactioned/list|follow/list|play/history|postprocess/flows|feed/share_url|shared_feed/profile|feed/comment/list` + `/ws/channels` + `/play` + `/rss/channels`（routes.go:47-64）。
+- **postprocess.go（下载后文件处理流水线）**：**flowengine 编排**——三个 FlowDefinition（wxchannels_postprocess_flow/main_flow/output_flow，648/1044/1335）+ 节点（DecryptNode/ConvertMP3Node/FinalizeMP3Node/StreamConvertNode/FinalizeStreamNode/ZipResourcesNode/TaskJobUpdateNode，1572-1796），入口 `Postprocess`（1798-1821）。
+
+**翻写取舍（B10 决策，用户确认"逻辑用他的、字段用咱们的"）**：
+1. **翻写 model.go 的响应→模型转换逻辑**：ToAccount/ToContent/BuildDownloadTask/parse_channels_object_for_download 的思路照上游（微信响应特有的清洗规则，号匣 master 无此逻辑），**输出字段按 B4 Pydantic 模型 + Spec.md 表结构**（author_videos 的 export_id/share_url 列、decode_key TEXT、video_id=object_id 字符串）。
+2. **翻写 adapter.go 的薄门面形态**：`core/api/wxchannels_service.py` 统一方法封装（7 个业务方法 + 输入归一化 parse），不含上游 runtime 注册/状态总线（号匣无 MITM 运行时）。
+3. **postprocess.go 不翻写 flowengine**：解密由 B3 `decrypt_service` 承接、mp3 转码已在 B3 标"按需扩展"、zip 打包号匣无需求——flowengine 编排是"多格式转码+打包"场景的产物，号匣单流直链 + 解密落盘不需要。
+4. **routes.go 不照搬 18 端点**：号匣已有自有路由体系（core/api/routers/*），B10 只取 7 个业务方法映射到号匣路由（对应 YZPQ-310 API 薄路由 38 接口）。
+
+**落点/接入点**：
+- `core/api/wxchannels_service.py`（业务门面：7 方法 + 响应后处理管道）。
+- `core/models/wxchannels.py`（B4）供输出；`core/service/channels_api.py`（B5）供输入。
+- 与 Spec.md 路由映射：`/api/channels/contact/search` → 号匣 `/api/v1/...`（按 YZPQ-310 路由表定）。
+
+**风险/决策点**：
+- **输入归一化是关键**：同一 content_json 可能是 ChannelsObject / feed_profile 响应 / 分享 profile 三形态（parse_channels_object_for_download 1167-1192）——翻写必须保留三态探测顺序，漏一个形态就解析失败。
+- **decode_key 传递**：build_resource_extra_json 把 decode_key 塞进资源 Extra（1482）→ B3 解密时从 Extra 取——号匣同样把 decode_key 落 download_tasks（B4 已定 decode_key_int 转换），两处口径要一致。
+- **图片/直播分支**：号匣主场景是视频，图片（album+BGM）和直播（LiveCdnUrl 校验）分支**保留实现但验收可降级**（号匣自用版先视频通路）。
+- **文件名清洗**：sanitize_filename 族（换行符/非法字符）号匣 Spec 已有 safe_title 实践（含 \n\r\t），以号匣为准。
+
+**验收细则**：
+1. 三种输入形态（ChannelsObject/feed_profile/分享 profile）各用实测响应 → 统一输出 B4 模型（字段与 Spec.md 表结构逐字段对齐）。
+2. 视频任务：BuildDownloadTask 输出 Task(Waiting) + 1 资源（mp4，含 decode_key extra）+ Account + Content，验收"下载入口三态"衔接。
+3. 7 个业务方法均可达（路由映射通）；直播/图片分支按需验收。
+4. 验证命令：`python -m unittest core.api.tests.test_wxchannels_service`。
+5. 端到端：真实分享链接 → B8 解析 → B10 门面 → B3 下载解密 → 文件落盘（标"待 B1-B9 完成后联调"）。
+
+**工作量**：2-3 个子块（门面 7 方法 + 响应后处理管道 + 输入归一化 + 单测），2-3 天。
 
 ### B7 下载任务状态机——L4（执行级，2026-10-29 落档）
 
