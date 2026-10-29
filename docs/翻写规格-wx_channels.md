@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.8 B2/B3 执行级 · 2026-10-29（解密链 B1-B3 全部落执行级，逐块深入推进中）
+> 状态：v0.9 B1-B4 执行级 · 2026-10-29（解密链 B1-B3 + 数据结构 B4 全部落执行级，逐块深入推进中）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -126,9 +126,62 @@ wx_channels_download（微信视频号域）
   3. 链路接入：微信视频号下载任务**不经 wx_video_download.exe**，由 Python 下载+解密+落盘，输出可播放文件；
   4. 单元测试：keystream 序列回归 + 样本文件解密断言。
 
-### B4 数据结构——L0（与 B1 并行）
-- types.go 全量模型（feed/作者/直播/评论 30.7KB）+ util.go。
-- 产出 `core/models/wxchannels.py`（Pydantic，对齐号匣 DB 表）。
+### B4 数据结构/常量——L0（执行级，2026-10-29 落档）
+
+**上游源码**：`pkg/scraper/wxchannels/types.go`（881 行，逐行读毕）+ `pkg/util/util.go`（67 行，逐行读毕）
+
+**上游逻辑（逐函数/逐类型）**：
+- **flexibleString（types.go:270-288）——核心机制**：微信接口把 `DecodeKey/ID/DocId/LiveId/AnchorStatusFlag` 等字段有时返回**数字**、有时返回**字符串**。Go 侧自定义 `UnmarshalJSON`：数字原样转字符串、字符串原样、null/空置空。涉及：`ChannelsMediaItem.DecodeKey`（types.go:96-109）、`ChannelsMusicInfo.DocId`（types.go:119-132）、`ChannelsObject.ID`（types.go:255-268）、`ChannelsLiveInfo.AnchorStatusFlag`（types.go:172-185）、`ChannelsFollowLiveInfo.AnchorStatusFlag`（types.go:648-661）、`JoinLiveInfo.LiveId`（types.go:753-766）。
+  - **这正是"大整数角落遗漏"的官方解法**：ID 是 uint64，超出 JS/JSON 安全整数，必须按字符串处理，**翻写时 ID/DecodeKey 一律用 str 类型**（Pydantic 加 BeforeValidator 兼容 int/str）。
+- **Base64↔uint64（util.go:15-67）**：`EncodeUint64ToBase64` / `DecodeBase64ToUint64String`——分享链接里的 `oid/nid` 是 **base64url 无填充编码的 8 字节大端 uint64**，转回十进制字符串（util.go:31-52：补 padding → Std 解码 → 左补 0 到 8 字节 → BigEndian → 十进制）。
+- **ParseFeedURL（types.go:781-808）**：解析 `channels.weixin.qq.com/web/pages/feed` 链接，取 `oid/nid/eid`；oid/nid 若可 base64 解码则转十进制字符串（`utilpkg.DecodeBase64ToUint64String`）。非该域名/路径 → `ErrUnsupportedURL`。
+- **ParseSphShareURL（types.go:860-881）**：解析两种形式——`weixin.qq.com/sph/{id}` 或 `channels.weixin.qq.com/finder-preview/pages/sph?id=`，取 id；其余 → ErrUnsupportedURL。
+- **模型家族（按用途分组）**：
+  - 通用包装：`ChannelsRequestResp[T]`（errCode/errMsg/data）、`BaseResponse`（Ret/ErrMsg）。
+  - 媒体：`ChannelsMediaItem`（URL/ThumbUrl/MediaType/VideoPlayLen/Width/Height/FileSize/Spec[]/CoverUrl/**DecodeKey**/URLToken——**下载核心**）、`ChannelsMediaSpec`（**上游只用了 FileFormat/Width/Height/DurationMs，其余字段注释掉**）、`ChannelsMusicInfo`、`ChannelsCodecInfo`、`ChannelsScalingInfo`、`ChannelsMediaCdnInfo`。
+  - 视频对象：`ChannelsObject`（ID/Contact/ObjectDesc/ObjectNonceId/SourceURL/CreateTime/Type/Spec/LiveInfo/Files/AnchorContact）、`ChannelsObjectDesc`（Description/Media[]/MediaType/FollowPostInfo）。
+  - 作者/关注：`ChannelsContact`（Username/Nickname/HeadUrl/Signature/CoverImgUrl）、`ChannelsFollowContact`（+FollowFlag/FollowTime/SpamStatus/ExtInfo/LiveInfo/ReferenceInfo）、`InfoListItem`。
+  - 直播：`ChannelsLiveInfo`、`ChannelsLiveMicSetting`、`JoinLiveInfo`、`JoinLivePayload`（LiveCdnUrl——**直播流地址**）。
+  - 各接口 Resp：`ChannelsContactSearchResp`（搜索）、`ChannelsFeedListOfAccountResp`（作者主页 feed 列表，含 FinderUserInfo/FeedsCount/AnchorStat/IPRegionInfo）、`ChannelsSharedFeedProfileResp`（分享链接）、`ChannelsFeedProfileResp`（单条 feed 详情）、`ChannelsFeedCommentListResp`（评论列表，含 FeedCommentInfo/CommentCountInfo/CountInfo）、`ChannelsFollowListResp`（关注列表）、`ChannelsPlayHistoryResp`（播放历史）、`ChannelsFeedShareUrlResp`（feed H5 链接）。
+  - 请求体：`ChannelsAccountSearchBody`（keyword/next_marker）、`ChannelsFeedListBody`（username/next_marker）、`ChannelsLiveReplayListBody`、`ChannelsLiveInfoBody`（username/oid/nid/id）、`ChannelsFeedProfileBody`（url/oid/nid/eid）、`ChannelsFeedCommentListBody`（oid/nid/comment_id/next_marker）、`ChannelsSharedFeedProfileBody`（url）。
+  - 分页游标：所有列表 Resp 的 `LastBuffer/ContinueFlag`——**next_marker=LastBuffer**（B5 分页依据）。
+  - 分享结果：`SphProfile`（share_url/sph_id/export_id/video_url/origin_video_url/...）、`FeedURLParts`、`SphURLParts`。
+  - Interceptor 系列（B6 用，snake_case 字段）：`InterceptorMediaSpec`、`InterceptorContact`、`MediaProfile`。
+
+**Python 翻写设计**：
+- 模块：`core/models/wxchannels.py`（Pydantic v2）+ `core/utils/wx_url.py`（URL 解析，独立于 models）。
+- **Pydantic 关键设计**：
+  - 所有 ID/DecodeKey 字段类型 `str`，加 `BeforeValidator(flexible_str)`（数字→str、str→str、None→""）——对应 Go flexibleString。
+  - `extra="ignore"`（微信响应字段远多于模型，未知字段丢弃）。
+  - `ChannelsMediaItem` 提供 `decode_key_int() -> int`（B3 解密要 uint64 key，str→int）。
+  - `ChannelsObject.id` 即 DB `author_videos.video_id`；`ObjectDesc.Media[0].URL/DecodeKey/FileSize` → 下载三要素。
+- `core/utils/wx_url.py`：
+  - `parse_feed_url(raw) -> FeedURLParts`（Python：urlparse → 校验域名/路径 → oid/nid base64 解码转十进制）。
+  - `parse_sph_share_url(raw) -> SphURLParts`。
+  - `base64_to_uint64_str(s) / uint64_str_to_base64(s)`（对齐 util.go:31-67，base64url 无填充 + 8 字节大端）。
+- **对齐现有 DB（core/utils/database/base.py 已实读）**：
+  - `author_videos` 表（video_id/author_id/object_nonce_id/url/decode_key INTEGER/cover_url/duration/create_time/video_type...）——B4 模型映射到该表：`ChannelsObject.ID→video_id`、`Media[0].URL→url`、`Media[0].DecodeKey→decode_key`、`Spec[0].DurationMs→duration`、`Contact.Nickname→作者名`。
+  - **决策点**：DB `decode_key` 是 INTEGER（存 uint64），模型是 str——落库前转 int（`decode_key_int()`），出库显示按 str。B4 不改表结构（保持兼容）。
+  - `download_tasks` 表（task_id/video_id/url/key INTEGER/status/progress/downloaded/total_size...）——B3 下载管道落此表，字段已齐。
+
+**与现有代码接入点**：
+- `core/utils/database/crud/models.py`（Author/AuthorVideo/DownloadTask）为 DB 层模型（现有，不动）；**新增的 `core/models/wxchannels.py` 是上游响应模型**（序列化层），两者分工：响应模型→DB 模型由 B5/B10 转换。
+- B5（client.go）反序列化响应直接 `WxModel.model_validate_json(data)`。
+- B6（interceptor）用 `MediaProfile/InterceptorMediaSpec`（snake_case）——**与主模型命名体系不同，翻写时保留 snake_case 独立类，不合并**。
+
+**风险/决策点**：
+- **大整数截断**（对应"大整数角落遗漏"讨论）：ID/DecodeKey 超过 2^53（JS 安全整数）——Pydantic int 会截断，**必须 str**。已通过 flexibleString 实锤。
+- **uint64 范围**：`decode_key` 是 uint64，Python int 无上限，但 JSON 里可能以字符串给出大数——BeforeValidator 兜住。
+- base64 解码失败/长度不足：util.go 静默返回 ""（util.go:37-42）——翻写同规则，不抛异常（ParseFeedURL 里 oid 解码失败就用原样字符串）。
+
+**验收细则**：
+1. `model_validate_json`：用 B5 实测响应样例（或 scripts_probe 抓取的 JSON）反序列化 → `object.id`/`media[0].decode_key` 为 str 且与原 JSON 一致（数字字段无截断）。
+2. `flexible_str`：`decode_key: 2136343393`（数字）与 `"2136343393"`（字符串）→ 都解析为 `"2136343393"`。
+3. URL 解析：`channels.weixin.qq.com/web/pages/feed?oid=<base64>&nid=<base64>&eid=x` → oid/nid 十进制一致；`weixin.qq.com/sph/xxx` → id=xxx；非法 URL → 抛 UnsupportedURLError。
+4. `base64_to_uint64_str`：util.go 的 8 字节大端样例往返一致。
+5. 验证命令：`python -m unittest core.models.tests.test_wxchannels` + `core.utils.tests.test_wx_url`。
+
+**工作量**：2 个子块（核心模型+URL 解析 ~300 行；全量 Resp/请求体模型 ~250 行），1-1.5 天。
 
 ### B2 流式解密 Reader——L1（执行级，2026-10-29 落档）
 
