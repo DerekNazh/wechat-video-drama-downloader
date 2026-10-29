@@ -750,6 +750,16 @@ wx_channels_download（微信视频号域）
 
 **⚠️ 待实测点（S3 前置，2026-10-29 挂起）**：proxy.server 的确切格式 = `socks5://127.0.0.1:2023` 还是 `http://127.0.0.1:2023`？→ 两种都试：本地起 2023 假代理 → 注入一种格式 → 开微信小程序看流量进不进。**此实测在微信下次方便退出时进行，通过后 A-v2 理论 100% 闭环。**
 
+**✅ 待实测点已闭环（2026-10-29 实测通过，等效路径）**：用系统 Edge（同为 Chromium 内核）+ 独立 profile + 屏幕外窗口实测（`scripts_probe_wechat_proxy.py`），**三种格式 Chromium 全部生效**：
+| server 值 | 代理入站 | 行为 |
+|---|---|---|
+| `socks5://127.0.0.1:2023` | 24 条（全 SOCKS5 握手） | 按 SOCKS5 代理 |
+| `http://127.0.0.1:2023` | 6 条（CONNECT+GET） | 按 HTTP 代理 |
+| **`127.0.0.1:2023`（无 scheme）** | 11 条（CONNECT+GET） | **按 HTTP 代理（与 http:// 一致）** |
+| 对照 mode=direct | 服务器直连 5 / 代理 0 | 干净对照 ✓ |
+
+**注入值锁定「`127.0.0.1:2023`」无 scheme**——正好是微信 GUI 手动设置时 Chromium 原生存储形态，零格式歧义。**关键坑**：现代 Chromium Preferences 位于 `<user-data-dir>/Default/Preferences`（根目录仅 Local State）——微信 `profiles/<hash>/Preferences` 即同一层 profile 结构，注入路径不变。四轮均实测"写入后启动不被 Chromium 重置"。**A-v2 理论 100% 闭环，S3 无需等微信退出再做格式实测（真机联调时验证一次注入→开小程序→流量进入→清除即可）。**
+
 **CA 安装逻辑（幂等，落 core/sniff/ca_manager.py）**：
 ```
 下载器启动（嗅探首次启用时）：
@@ -807,7 +817,7 @@ wx_channels_download（微信视频号域）
 
 - [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
 - [ ] S2 mitmproxy 基座接入（2023 端口，统一启停管理替代 res_download_service.py）
-- [ ] S3 **微信 Preferences 程序化注入/清除**（A-v2，proxy_manager.py：闭环状态机 IDLE→INJECTING→ACTIVE→CLEARING+自愈，多 profile 遍历+写回校验+备份还原；**前置实测：proxy.server 格式 socks5:// vs http:// 二选一**——本地起 2023 假代理注入后开小程序验证流量进入，通过后 A-v2 理论 100%）
+- [ ] S3 **微信 Preferences 程序化注入/清除**（A-v2，proxy_manager.py：闭环状态机 IDLE→INJECTING→ACTIVE→CLEARING+自愈，多 profile 遍历+写回校验+备份还原；**格式已实测锁定「127.0.0.1:2023」无 scheme**，真机联调时验证一次 注入→开小程序→流量进入→清除 即可）
 - [ ] S4 注入模块（inject.py，qqMediaRegex 逻辑翻写）
 - [ ] S5 上报拦截 + 直链解析（wechat.py，handleWechatRequest/handleMedia 翻写）
 - [ ] S6 与一期 B1/B3/B5 联调（decodeKey 解密链 + WS 下发）
