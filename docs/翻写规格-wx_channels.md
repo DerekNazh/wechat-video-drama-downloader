@@ -659,3 +659,88 @@ wx_channels_download（微信视频号域）
 - [ ] **B7** 状态机差异比对（依赖 B3）
 - [ ] 评估项：content/data_query、scraper_job、cache、events/hermes、database-model 对照（不阻塞，深入时再看）
 - [ ] 配套：`core/api/app.py`/`base_service.py` 中微信视频号 exe 启停逻辑移除（随 B1/B7 渐进）
+
+---
+
+## 六、二期：短剧嗅探翻写（res-downloader → Python，2026-10-29 拍板）
+
+> **状态**：v0.20 二期框架 + 代理方案落档（2026-10-29）。范围=**微信小程序短剧嗅探**（仅 qq.com 插件微信域，不做任意平台/DefaultPlugin 兜底/QQ音乐/m3u8/直播）。
+> 决策链：①用户明确"只想搜微信视频号/微信小程序里的短剧"→ 范围收窄为 qq.com 微信域；②代理三选一拍板：**CA（Current User Root）+ 微信手动代理 127.0.0.1:2023 + mitmproxy 统一管理**——系统代理全程不碰（用户亲历系统代理"老不好用"）；③CA 安装实测（2026-10-29）：`certutil -user -addstore` / `Import-Certificate` / `.NET X509Store` 三种方式全部会弹一次确认框（Import-Certificate 直接报"此操作中不允许使用 UI"）——**Windows 对 Root 存储有安全保护，零弹窗做不到**；行业标准（Fiddler/Charles/mitmproxy）均为首次弹一次。④因此 CA 安装 = **检测先行、有则跳过、无则弹一次、幂等**；⑤语言 Python + 基座 mitmproxy（比逐行翻 proxy.go 省力）。
+
+### 6.1 上游机制（research/res-downloader 源码实锤）
+
+**短剧嗅探 6 步链路**：
+```
+① 用户在小程序打开短剧 → 页面加载 res.wx.qq.com 的 JS
+② 注入：替换 JS 里 get media() 钩子（qqMediaRegex）→ 拦截 objectDesc（plugin.qq.com.go:81-107）
+③ 上报：objectDesc POST https://wxapp.tc.qq.com/res-downloader/wechat?type=1
+④ 拦截：handleWechatRequest 收 body → 协程解析（:122-131）
+⑤ 解析：handleMedia 取 media[0] → url + urlToken 拼可下载直链（:133-240）
+⑥ 去重+下发：Md5(url) 标记 + Send newResources（:235-239）
+```
+
+**附带信息**（:202-233）：`fileSize` / `coverUrl` / **`decodeKey`（短剧解密密钥）** / `spec.fileFormat` / `description`。
+
+**WxAction 双模式**（config.go:33）：type=1 播放时上报 / type=2 评论详情上报。短剧大概率走 type=1（播放即嗅探）。
+
+**资源类型闸门**（resource.go getResType）：all/video/image——前端开关控制，翻写时保留。
+
+### 6.2 代理方案（本规格核心闭环，2026-10-29 实测定稿）
+
+**目标**：整个软件告别系统代理（用户拍板）。**三个独立组件**：
+
+| 组件 | 方案 | 用户感知 |
+|---|---|---|
+| **CA 证书**（HTTPS 解密） | 装 Current User\Root（无需管理员） | **检测→弹一次→幂等**（Windows 安全红线：Root 存储必弹一次，行业同） |
+| **流量入口** | **微信手动代理** 127.0.0.1:2023（只影响微信，替代系统代理） | 设一次，下载器统一管理 |
+| **代理进程** | mitmproxy（Python）统一管理，端口 2023 | 无感（下载器拉起/自愈） |
+
+**CA 安装逻辑（幂等，落 core/sniff/ca_manager.py）**：
+```
+下载器启动（嗅探首次启用时）：
+  ① 检测 Current User\Root 有无我们的 CA（按 Thumbprint/Subject 判断）
+  ② 有 → 跳过（零打扰）
+  ③ 无 → 执行安装 → 弹一次确认框 → 用户点"是" → 装完
+  ④ 之后每次启动 → 检测到已有 → 永远不再弹
+```
+
+**实测记录（2026-10-29）**：
+- `certutil -user -addstore "Root"` → 卡住等确认（弹框）
+- PowerShell `Import-Certificate` → 报"此操作中不允许使用 UI"
+- .NET `X509Store.Add` → 卡住等确认（弹框）
+- 结论：**Windows 对 Root 存储有安全保护，零弹窗不可行**；行业标准（Fiddler/Charles/mitmproxy）= 首次弹一次，幂等跳过。
+
+**与一期 B11 的关系**：
+- 一期 B11：WebView2 单实例代理（`--proxy-server=http://127.0.0.1:2023`），零证书零驱动——视频号网页版数据走 WS 桥，不需要 MITM。
+- 二期短剧：**必须 MITM**（嗅探本质=抓包+注入），所以需要 CA + 流量入口。两者**代理端口统一 2023、CA 体系独立于 WebView2**。
+
+### 6.3 二期 Python 落地映射
+
+| 步 | Go 上游 | Python 落地（mitmproxy） |
+|---|---|---|
+| MITM 拦截 | goproxy + setCa | mitmproxy + 内置 CA |
+| 注入 JS | replaceWxJsContent 替换 `.js?v=` | mitmproxy `response` 钩子，同正则替换 |
+| 收上报 | handleWechatRequest | mitmproxy `request` 钩子拦截 `/res-downloader/wechat` |
+| 解析直链 | handleMedia | `core/sniff/wechat.py`（照翻逻辑，全新命名） |
+| 去重 | MediaIsMarked(sync.Map) | dict/set |
+| 下发 | Send newResources（WS 桥） | 直接调一期 **B5 ws_client.py** |
+| 入口 | 系统代理 8899 | **微信手动代理 + WebView2 单实例** |
+
+### 6.4 二期范围（已收窄）
+
+**只翻**：注入（`core/sniff/inject.py`）+ 上报拦截（`core/sniff/wechat.py`）+ 直链解析（照 handleMedia）+ CA 管理（`core/sniff/ca_manager.py`）+ 代理管理（`core/sniff/proxy_manager.py`）。
+
+**不翻**：DefaultPlugin 全平台兜底、QQ 音乐、m3u8/直播、前端 UI（Wails）。
+
+**复用一期**：B1 解密器（isaac64）、B3 解密服务（decodeKey 直喂）、B5 WS 桥、B11 WebView2 单实例代理。
+
+### 6.5 二期待办（依赖序，排期：一期完成后启动）
+
+- [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
+- [ ] S2 mitmproxy 基座接入（2023 端口，统一启停管理替代 res_download_service.py）
+- [ ] S3 微信手动代理设置/自愈（127.0.0.1:2023，退出恢复）
+- [ ] S4 注入模块（inject.py，qqMediaRegex 逻辑翻写）
+- [ ] S5 上报拦截 + 直链解析（wechat.py，handleWechatRequest/handleMedia 翻写）
+- [ ] S6 与一期 B1/B3/B5 联调（decodeKey 解密链 + WS 下发）
+- [ ] S7 替换 res_download.exe（res_download_service.py 保姆代码退役）
+
