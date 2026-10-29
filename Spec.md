@@ -1,6 +1,6 @@
 # Spec：号匣（haoxia）微信视频号下载器（红狐主 / TikHub 备双供应商）
 
-> 状态：草稿 · v1.85 · 2026-10-29（v1.84 实施前风险⑤-⑪统一落档；v1.85 Spec 全量审查清零旧文字残留：标题号匣化、阶段一前置条件回填（TikHub 风控解除 v1.60/v1.65 实测可用）、客户端版本号 1.0.0（修正 v1.47 v0.1.0 残留）、fetch_channel_id_to_username 移出×3（v1.80）、熔断归属修正（v1.83 供应商级提前阶段一）、L1 口径（share_url 主路径 v1.78）、L2 红狐主注（v1.39）、"不调 TikHub"→"不调上游"、接口总数统一 38）；此前版本记录：v1.80 400 官方确认；v1.81 前端安全修复落档；v1.82 下载链路三连环·环3收口：L5 校验=Content-Length 字节权威、file_size 降级纯展示；v1.83 实施前风险逐项拍板统一落档：①成本感知转备（供应商级熔断提前阶段一，修正 v1.45）②解析防御五件套 ③红狐 T+1 方案 A+空确认标记+total=0 三态区分（empty_reason 实测）；v1.84 实施前风险⑤-⑪统一落档：⑤开发环境 uv 接管（pyproject/uv.lock/.python-version/scripts_scan_deps.py，15 依赖全量迁移）⑥打包两件套+分支策略（master=旧项目冻结、feature/haoxia=号匣 V1 全新产品：纯 API、零外部二进制、无旧链路、.env.example 首启生成、产物名"号匣"）⑦前端集成回归三层（L1 功能回归 10 项必做）⑧nickname 重名（锚定唯一 ID+配对缓存+TikHub 兜底）⑨SQLite 并发（客户端本地库，WAL+busy_timeout 5000）⑩大整数核查项（全链路 string 已定 v1.42，实施 grep 排查三类值）⑪自动更新替换权限（退出后替换 A3，阶段二升 A2）；客户端 UI 规范遵循暗宇宙设计系统，氛围层+操作区克制；「两阶段交付路线」：阶段一自用版 / 阶段二商业化版）
+> 状态：草稿 · v1.86 · 2026-10-29（v1.85 Spec 全量审查清零旧文字残留后追加 §2.7 CI/CD 与发布链路：CI=本地门禁脚本（掼蛋式，复用 scripts/common + pre-commit 钩子挂法，commit 失效即红，不接 runner）、CD=ADR-021 本地化发布（release.ps1 模板改造 + 双产物 + latest.json 指针人控）、自动更新=CD 消费侧衔接明确，闭环，发布流水线编排=90% 自动+指针人控闸门（-PublishPointer/-SkipPointer）；此前版本记录：v1.84 实施前风险⑤-⑪统一落档：⑤开发环境 uv 接管（pyproject/uv.lock/.python-version/scripts_scan_deps.py，15 依赖全量迁移）⑥打包两件套+分支策略（master=旧项目冻结、feature/haoxia=号匣 V1 全新产品：纯 API、零外部二进制、无旧链路、.env.example 首启生成、产物名"号匣"）⑦前端集成回归三层（L1 功能回归 10 项必做）⑧nickname 重名（锚定唯一 ID+配对缓存+TikHub 兜底）⑨SQLite 并发（客户端本地库，WAL+busy_timeout 5000）⑩大整数核查项（全链路 string 已定 v1.42，实施 grep 排查三类值）⑪自动更新替换权限（退出后替换 A3，阶段二升 A2）；v1.85 Spec 全量审查清零旧文字残留：标题号匣化、阶段一前置条件回填（TikHub 风控解除 v1.60/v1.65 实测可用）、客户端版本号 1.0.0（修正 v1.47 v0.1.0 残留）、fetch_channel_id_to_username 移出×3（v1.80）、熔断归属修正（v1.83 供应商级提前阶段一）、L1 口径（share_url 主路径 v1.78）、L2 红狐主注（v1.39）、"不调 TikHub"→"不调上游"、接口总数统一 38）；此前版本记录：v1.80 400 官方确认；v1.81 前端安全修复落档；v1.82 下载链路三连环·环3收口：L5 校验=Content-Length 字节权威、file_size 降级纯展示；v1.83 实施前风险逐项拍板统一落档：①成本感知转备（供应商级熔断提前阶段一，修正 v1.45）②解析防御五件套 ③红狐 T+1 方案 A+空确认标记+total=0 三态区分（empty_reason 实测）；客户端 UI 规范遵循暗宇宙设计系统，氛围层+操作区克制；「两阶段交付路线」：阶段一自用版 / 阶段二商业化版）
 > 范围：本版本仅覆盖**视频号（数据源=红狐主 / TikHub 备）**；**短剧嗅探不在本版本范围**（另行排期合入）。
 > 目的：本文档用于对齐需求与实现边界，供团队探讨迭代。内容基于现状代码统计与知识库《TikHub 供应商契约》《红狐 RedFoxHub 契约》整理。
 
@@ -1009,6 +1009,40 @@ CREATE TABLE IF NOT EXISTS billing_config (
 **⑧ 运营纪律（ADR-063 教训）**：发版/发卡统一走香港底座（adminlm.hubapi.work），禁止 SSH 隧道连阿里云后台生成产物/卡密，防止双底座分裂。
 
 **⑨ 柠檬侧修正**：`lemon-kami` 仓库 `docs/UPDATE_CLIENT_INTEGRATION.md`「零、检查时机」已改为"启动 + 每日静默"（本地 clone 已改，commit/部署时同步；柠檬为公共底座，服务端改动须回归测试——本次只改文档不动代码）。
+
+### 2.7 CI/CD 与发布链路（v1.86 新增：CI=本地门禁脚本（掼蛋式），CD=ADR-021 本地化发布 + 自动更新消费侧）
+
+> 决策（2026-10-29 用户拍板）：CI/CD **不接任何远程 CI 平台 / runner**，采用「掼蛋直播回放切片」式 100% 本地轻量方案——复用公司已验证模板：`scripts/common/` 模块库、`slicer-ui\release.ps1` 打包脚本、知识库 pre-commit 钩子挂法。**自动更新不是独立管道，是 CD 的消费侧**——CD 产出自动更新可消费的产物（update.zip + latest.json），客户端消费，链路见下。
+
+**① CI（集成门禁，commit 前本地跑）**：
+- 门禁脚本：`scripts_check_all.py` 串联 ①L0 语法 ②L1 安全（scripts_check_frontend.py 模式，防内联 onclick/innerHTML 回退）③契约快照 diff（scripts_check_tikhub_schema.py，302 票）④uv 依赖扫描（scripts_scan_deps.py）⑤pytest。任一红即拦下，**不接 runner、不烧 GitHub 分钟**。
+- 挂法复用知识库 pre-commit 钩子模板：`git config core.hooksPath <仓库>/scripts/hooks` 一行启用，commit 失效即红；`--no-verify` 单次跳过（明确知道自己在做什么时才用）。
+- 阶段一自用版不建推送自动 CI；阶段二商业化（网关/服务器形态）前再评估接自托管 runner（私有高频流水线迁自托管 runner，ADR-021 边界：公开仓库与 server-secrets 为红线）。
+
+**② CD（发布，ADR-021 本地化发布，已定 v1.84⑥）**：
+- 发布脚本：改造 `slicer-ui\release.ps1` 模板为号匣版 `release.ps1`（换 App 名「号匣」/端口/资产清单/引擎源），8 步闭环：前置检查 → 清理 → PyInstaller onedir 主包 → 挪 data 到包根 → 内置 python 种子 → install.exe 引导器 → zip + **双产物（安装包 + update.zip）** → 无头冒烟（health 200）+ 窗口段（WebView2 + CDP pages）→ 分发自检。
+- 产物清单（每版本不可变）：`haoxia-<ver>-setup.zip`（新装）+ `update.zip`（已装升级，sha256 写入 latest.json）。
+- 发布链：本机构建 → OSS `lemon-kami-artifacts` 公共读桶 `haoxia/releases|updates/`（不可变产物+私有桶归档）→ **latest.json 指针人控切换**（-PublishPointer，禁止自动覆盖）→ `release_record` 登记。**禁 push tag 触发 GitHub Release 烧分钟**。
+
+**③ 自动更新 ↔ CD 衔接（v1.86 明确，闭环）**：
+- 自动更新客户端（§2.6）消费 `https://lemon-kami-artifacts.oss-cn-beijing.aliyuncs.com/haoxia/updates/latest.json`：检查 → 比对版本 → 下载 update.zip → sha512 校验 → 重启替换（A3：提示重启后重启时替换，装用户目录保写权限）。
+- **CD 脚本必须同时产出 update.zip 并把它与 sha256 写进 latest.json**（双产物已定 v1.84⑥，本项为衔接要求，无需新增独立管道）。latest.json 结构：`{version, url(update.zip), sha256, release_notes, published_at}`。
+- 更新失败不阻塞自用（浏览/下载不依赖更新），检查失败静默 + 日志。
+
+**④ 一键发布流水线编排（v1.86 追加，用户拍板 90% 自动 + 指针人控闸门）**：
+- 总入口：`.\release.ps1`（幂等，红即停），单命令串联 CI/CD/上传：
+  - Step 1 CI 门禁（自动）：`scripts_check_all.py`（L0+L1+契约 diff+依赖扫描+pytest），红→停报错，绿→继续
+  - Step 2 打包（自动）：PyInstaller onedir 主包 + install.exe 引导器
+  - Step 3 冒烟（自动）：无头 health 200 + 窗口段 WebView2 CDP + 分发自检
+  - Step 4 双产物（自动）：安装包 zip + update.zip + sha256 写入 latest.json
+  - Step 5 上传 OSS（自动）：releases/（不可变）+ updates/（不可变）公共读桶
+  - Step 6 **指针切换（人控闸门）**：脚本停住打印产物清单+sha256，人工确认后才执行切指针
+    - `-PublishPointer`：显式确认发布（切 latest.json 覆盖存量用户）
+    - `-SkipPointer`：只上传产物不发布（攒版本/自测/择时）
+    - 默认不带参数 = 只上传不切（fail-safe，防误发）
+  - Step 7 登记（自动）：`release_record`（版本/产物/时间/备注）
+- 门控理由（行业标准，非缺陷）：指针切换 = 一推覆盖全部存量用户，生产质检全自动、发布留人工确认（对齐 GitHub Actions 发布门控 / Apple 上架人工审核）；打包/冒烟可机器判断，但"是否发布"是决策不是检查。
+- 自动更新客户端无需改动：它就是消费 latest.json（§2.7③），指针一切即自动触达已装用户。
 
 ### 3. 不做重构（低收益高风险项，记录在案）
 
