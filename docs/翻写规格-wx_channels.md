@@ -734,6 +734,21 @@ wx_channels_download（微信视频号域）
 
 **复用一期**：B1 解密器（isaac64）、B3 解密服务（decodeKey 直喂）、B5 WS 桥、B11 WebView2 单实例代理。
 
+### 6.4.1 微信域 URL 特征（上游实锤清单，短剧场景待用户实测确认）
+
+**上游 plugin.qq.com.go 已实锤的通用特征**（微信视频号+小程序共用 qq.com 域，本清单可直接写死到 inject/wechat 规则）：
+
+| 域名特征 | 路径/URI 特征 | 用途 |
+|---|---|---|
+| `finder.video.qq.com`（后缀） | — | 视频直链 CDN（嗅探目标） |
+| `channels.weixin.qq.com`（后缀） | `/web/pages/feed`、`/web/pages/home` | 视频号页面 JS 注入 |
+| `res.wx.qq.com`（后缀） | `web/web-finder/res/js/virtual_svg-icons-register.publish` | 注入点（篡改 JS 加钩子） |
+| `qq.com`（包含） | `/res-downloader/wechat`（`type=1`/`type=2`） | 上报端点 |
+| `mp.weixin.qq.com`（Origin 头） | — | 排除条件（非视频号来源不嗅） |
+
+**⚠️ 待确认项（2026-10-29 用户挂起，明天实测后补充）**：**"微信小程序短剧"是否走同一套 qq.com 链路，上游无单独标注**——用户将实测确认短剧真实 URL 特征；若命中上表则零额外工作，若走其他 CDN 域名则补一条特征。**在用户确认前，S4 注入规则不写死短剧专属特征，仅按上表通用特征实现。**
+
+
 ### 6.5 二期待办（依赖序，排期：一期完成后启动）
 
 - [ ] S1 CA 管理（检测/安装/幂等，certutil -user 实测路径）
