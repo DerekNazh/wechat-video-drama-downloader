@@ -1,6 +1,6 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：**v0.16 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥——此前误弃用，B5 WS 桥的页面侧数据来源；v0.16 修正投放方式=进程级代理——弃系统代理改 --proxy-server 专用实例，免污染其他软件/免全机断网，用户拍板优化）**
+> 状态：**v0.17 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥——此前误弃用；v0.16 投放方式改进程级代理；v0.17 定主方案=WebView2 单实例代理——用户成本最低+不污染其他软件兼得，官方实锤 AdditionalBrowserArguments override 系统设置仅影响本实例）**
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
@@ -533,8 +533,8 @@ wx_channels_download（微信视频号域）
 
 **翻写取舍（B11 决策，v0.16 修正：进程级代理取代系统代理）**：
 1. **注入 JS 内容必翻**（channels.ws.js 桥 + channels.utils.js/events.js 桥接部分）——数据命根子，Python 侧无法替代（必须在浏览器页面环境里跑 JS）。
-2. **投放方式 = 进程级代理（不碰系统代理）**——用户拍板优化：不用系统代理去 2023 劫持全机流量（污染其他软件、代理挂则全机断网），改用进程级：
-   - **主方案（浏览器场景）**：`--proxy-server="http://127.0.0.1:2023"` 启动专用 Chrome/Edge 实例（Chromium 官方参数，只对本实例生效）+ 独立 `--user-data-dir` 隔离，Python `subprocess` 拉起即可，**纯用户态、零驱动、不设系统代理**。可选叠加 CDP 注入 JS 桥（`Page.addScriptToEvaluateOnNewDocument`）。
+2. **投放方式 = 进程级代理（不碰系统代理）**——用户拍板优化：不用系统代理去 2023 劫持全机流量（污染其他软件、代理挂则全机断网），改用进程级。
+   - **主方案（v0.17 修正：WebView2 单实例代理，用户成本最低）**：软件内嵌 WebView2（pywebview 现有技术栈）打开视频号页面，`AdditionalBrowserArguments="--proxy-server=http://127.0.0.1:2023"` —— Microsoft Learn 官方实锤：该参数 **override 系统设置、只影响本 WebView2 实例的 HTTP/HTTPS 请求**。用户点"打开视频号"→ 内嵌窗口 → 扫码登录一次 → 零操作；其他软件零影响；不设系统代理；零驱动。可选叠加 CDP 注入 JS 桥。
    - **备选方案（微信客户端内嵌页面场景，待用户拍板）**：mitmproxy `--mode local:<WeChat.exe>`（官方进程级，Windows 底层 WinDivert/WFP 内核驱动，只拦指定 PID），需驱动+证书，成本高。
 3. **UI 不翻**：model.js/view.js/panel.js/components.js（下载面板 219KB）不翻——号匣自研 WebView2 前端已覆盖 UI（原"自研前端"理由对 UI 成立，对注入桥不成立）。
 4. **证书策略**：MITM 需 TLS 证书；进程级方案下证书信任范围可只限专用浏览器实例（参数/实例级信任），**不装系统根证书**（相比上游全局装证书的改进点，需实测浏览器实例证书信任注入方式）。
