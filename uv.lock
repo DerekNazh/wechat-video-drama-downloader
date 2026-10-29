@@ -321,6 +321,7 @@ dependencies = [
     { name = "httpx" },
     { name = "openpyxl" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "pyinstaller" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
@@ -339,6 +340,7 @@ requires-dist = [
     { name = "httpx", specifier = "==0.28.1" },
     { name = "openpyxl", specifier = "==3.1.5" },
     { name = "pydantic", specifier = "==2.13.1" },
+    { name = "pydantic-settings", specifier = "==2.16.2" },
     { name = "pyinstaller", specifier = "==6.19.0" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "python-multipart", specifier = "==0.0.26" },
@@ -608,6 +610,21 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/01/55/a37461fbb29c053ea4e62cfc5c2d56425cb5efbef8316e63f6d84ae45718/pydantic_core-2.46.1-cp314-cp314t-win32.whl", hash = "sha256:3b146d8336a995f7d7da6d36e4a779b7e7dff2719ac00a1eb8bd3ded00bec87b" },
     { url = "https://mirrors.aliyun.com/pypi/packages/22/d7/97e1221197d17a27f768363f87ec061519eeeed15bbd315d2e9d1429ff03/pydantic_core-2.46.1-cp314-cp314t-win_amd64.whl", hash = "sha256:f1bc856c958e6fe9ec071e210afe6feb695f2e2e81fd8d2b102f558d364c4c17" },
     { url = "https://mirrors.aliyun.com/pypi/packages/19/d5/4eac95255c7d35094b46a32ec1e4d80eac94729c694726ee1d69948bd5f0/pydantic_core-2.46.1-cp314-cp314t-win_arm64.whl", hash = "sha256:21a5bfd8a1aa4de60494cdf66b0c912b1495f26a8899896040021fbd6038d989" },
+]
+
+[[package]]
+name = "pydantic-settings"
+version = "2.16.2"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/d0/31/21d21e0e38a8f5f7a7f0cde22820117b6d17d6bc36f348129527f915d7f4/pydantic_settings-2.16.2.tar.gz", hash = "sha256:3dc08ffabed2bbd5dc2dd55ead7b78b4e4c5cd776aecd04310db5f1224caaf46" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/39/88/4131c51ff87b7cd7f82a1194d0c0a2b7ca68c72d9da04c3b7e69ab91a79f/pydantic_settings-2.16.2-py3-none-any.whl", hash = "sha256:8d523e5c129b097686bde019bd6109bff53f4c8c3f63f1ddf9933ffa42e5ab4f" },
 ]
 
 [[package]]

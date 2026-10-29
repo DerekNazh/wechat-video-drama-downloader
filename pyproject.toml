@@ -18,7 +18,12 @@ dependencies = [
     "openpyxl==3.1.5",
     "typer==0.25.1",
     "pyinstaller==6.19.0",
+    "pydantic-settings==2.16.2",
 ]
 
 [tool.uv]
 package = false
+
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
