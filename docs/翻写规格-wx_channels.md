@@ -1,9 +1,29 @@
-# 翻写规格：wx_channels_download → 号匣/legacy 自研（微信视频号域）
+# 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
-> 状态：v0.5 技术栈基线 · 2026-10-29（v0.4 后拍板翻写语言：Python——约束推导，非偏好）
-> 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），供 legacy 分支自研版使用。
+> 状态：v0.7 落点决策 · 2026-10-29（明确翻写产物落 wechat-downloader 分支，与 master 号匣解耦）
+> 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
+
+---
+
+## 〇.6、落点决策（2026-10-29 拍板）
+
+**翻写产物落点 = `wechat-downloader` 分支**（当前工作区，不是 master 号匣）：
+
+| 分支 | 角色 | 与翻写关系 |
+|---|---|---|
+| **wechat-downloader**（当前） | 活跃商业化产品线：二合一下载器（短剧嗅探 res_download.exe + 微信视频号 wx_video_download.exe + TikHub/红狐 API 链路 + 柠檬卡密商业化） | **翻写落地分支**——Python 自研替代 exe 依赖 |
+| master | 号匣 haoxia（纯 API 零成本版，独立产品线） | 不承接本翻写；其 127.0.0.1:2022 Go 后端依赖是号匣自身架构项，另行处理 |
+
+**为什么落 wechat-downloader**（用户拍板依据）：
+1. "这个分支我们还要的，相当于另一个产品版本，后面要商业化"——活跃开发，非研究用；
+2. 开源合规（MIT+Commons Clause 禁 Sell）→ 必须按逻辑自研 → 产物进这个分支；
+3. 分支现有结构实锤：`core/`（Python）+ `res_download/`+`weixin_exe/`（exe 依赖）+ 30 个探测脚本 + 商业化文档——**翻写就是把 exe 的解密/下载能力替换为 core 内 Python 模块**。
+
+**B1 生产化的具体目标（替代对象实锤）**：
+- `core/api/app.py` 自动启动 `res_download.exe`（短剧嗅探）+ `wx_video_download.exe`（微信视频号下载）——翻写完成后**微信视频号域不再启动/依赖 wx_video_download.exe**，由 Python 自研下载+解密链路替代；res_download（Apache 2.0，可商用）按需保留。
+- `core/api/routers/base_service.py` 管理 exe 启停——微信视频号相关部分移除。
 
 ---
 
@@ -96,12 +116,14 @@ wx_channels_download（微信视频号域）
 ### B1 解密核心（ISAAC-64）——L0 首块
 - 算法：golden=0x9e3779b97f4a7c13，256 状态，4+2 轮 mix，8 字节大端 keystream，前 encLen 字节 XOR。
 - 依赖仅 encoding/binary。号匣已有 Python 版（scripts_probe_python_decrypt.py，v1.70 实测 ftyp+ffprobe 通过）→ **算法级已 100% 完成**。
-- **生产级缺口（2026-10-29 实测发现）**：master `core/**` 无任何解密实现（grep isaac/decrypt 为空）；`core/service/task.py` 下载链路仍依赖 **127.0.0.1:2022 Go 后端**（`WechatVideoAPIClient(base_url="http://127.0.0.1:2022")`），解密在 Go 侧。**B1 翻写=把验证脚本升格为生产模块并接入下载链路，摆脱 Go 依赖。**
-- 产出 `core/decrypt/isaac64.py`（生产模块，由验证脚本升格）+ 下载链路接入（本地解密替代 Go 后端任务）。
+- **生产级缺口（2026-10-29 实测发现）**：wechat-downloader 分支解密由 **wx_video_download.exe（Go 二进制）** 完成（`core/api/app.py` 自动启动），Python 侧无解密实现。**B1 翻写 = 把验证脚本升格为生产模块，微信视频号域下载链路本地解密，不再启动/依赖 wx_video_download.exe。**
+- 产出（落 wechat-downloader 分支 core/）：
+  - `core/decrypt/isaac64.py`（生产模块，由 scripts_probe_python_decrypt.py 升格）；
+  - `core/decrypt/decrypt_reader.py` 起点（与 B2 衔接：本地解密读流的接口预留）。
 - 验收标准（完整）：
   1. 算法等价：同 key 前 8 keystream 与 Go 一致 + 实测文件可播（已过）；
   2. 生产模块化：`core/decrypt/isaac64.py` 为正式模块（非 scripts 脚本），纯 Python 无外部依赖；
-  3. 链路接入：号匣下载任务**不经 Go 后端**完成"下载+解密+落盘"，输出可播放文件；
+  3. 链路接入：微信视频号下载任务**不经 wx_video_download.exe**，由 Python 下载+解密+落盘，输出可播放文件；
   4. 单元测试：keystream 序列回归 + 样本文件解密断言。
 
 ### B4 数据结构——L0（与 B1 并行）
@@ -165,9 +187,9 @@ wx_channels_download（微信视频号域）
 - 上游源码仅在 research/ 参考，不入主代码路径。
 - 新增许可证依赖（ffmpeg）登记《开源依赖合规约束.md》。
 
-## 五、待办（按依赖序）
+## 五、待办（按依赖序，全部落 wechat-downloader 分支 core/）
 
-- [ ] **B1** 解密核心对照验证（L0，首块）
+- [ ] **B1** 解密核心生产化：算法已验证 → 升格 `core/decrypt/isaac64.py` + 微信视频号下载链路本地解密（L0，首块）
 - [ ] **B4** 数据结构（与 B1 并行）
 - [ ] **B9** Cookie 支撑（并行）
 - [ ] **B2** 流式 Reader（依赖 B1）
@@ -178,3 +200,4 @@ wx_channels_download（微信视频号域）
 - [ ] **B10** 业务适配门面（依赖 B3+B5）
 - [ ] **B7** 状态机差异比对（依赖 B3）
 - [ ] 评估项：content/data_query、scraper_job、cache、events/hermes、database-model 对照（不阻塞，深入时再看）
+- [ ] 配套：`core/api/app.py`/`base_service.py` 中微信视频号 exe 启停逻辑移除（随 B1/B7 渐进）
