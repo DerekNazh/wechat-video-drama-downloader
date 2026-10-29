@@ -1,9 +1,38 @@
 # 翻写规格：wx_channels_download → 号匣/legacy 自研（微信视频号域）
 
-> 状态：v0.4 二次缺漏审查 · 2026-10-29（v0.3 后补查 download_task 依赖链，发现 adapter/wxchannels 业务适配层为真实缺漏）
+> 状态：v0.5 技术栈基线 · 2026-10-29（v0.4 后拍板翻写语言：Python——约束推导，非偏好）
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），供 legacy 分支自研版使用。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写代码为全新实现，不受 Commons Clause 约束。
 > 源码位置：`D:\setup_temp\剪辑合成拆散\新_二合一总下载器\research\wx_channels_download\`
+
+---
+
+## 〇.5、技术栈基线（2026-10-29 拍板：Python）
+
+**选型结论**：翻写语言 = **Python**，全部 10 块统一。理由 = 约束推导（不是偏好）：
+1. **嵌入目标**：翻写产物进号匣代码库（master = Python/FastAPI），语言不匹配无法落地；
+2. **已有资产**：B1 解密已用 Python 实现且实测通过，换语言=推倒重来；
+3. **性能**：解密热路径=128KB keystream+XOR，Python 毫秒级，瓶颈在网络/磁盘非 CPU；
+4. **生态**：逆向/爬虫社区 Python 参考实现最厚（Evil0ctal/Hanson 均有 Python 版）；
+5. **行业惯例**：翻写目标语言=落地产品语言，不跟随参考源（Go）。
+
+**基线（对齐号匣 master pyproject.toml 实锤）**：
+
+| 项 | 值 |
+|---|---|
+| 语言 | Python **3.13**（requires-python >=3.13） |
+| 包管理 | **uv**（[tool.uv] 已配置，阿里云镜像） |
+| HTTP | httpx 0.28 + requests 2.33 |
+| WS 客户端 | websocket-client 1.9 |
+| 数据模型 | pydantic 2.13 |
+| 服务 | FastAPI 0.136 + uvicorn 0.44 |
+| 前端容器 | pywebview 6.2（WebView2） |
+| 打包 | pyinstaller 6.19 |
+
+**语言差异落地要点（翻写时必须处理）**：
+- Go uint64 自动回绕 → Python 需 `& 0xFFFFFFFFFFFFFFFF` 掩码（B1 已实现，`MASK` 常量）；
+- decode_key 大整数 → Python int 无限精度无截断风险，接口层按字符串读入（对齐 master 大整数规范）；
+- ffmpeg 转码 → subprocess 调用（B3 用）。
 
 ---
 
