@@ -848,6 +848,8 @@ wx_channels_download（微信视频号域）
 `https://1500064280.vodpreview.wxamedia.com:443/cbf9b5a3vodsh1500064280/d283d4865001834825306789435/f0.mp4?t=6ae42f81&us=6ae41361458a5b5d02cdad2cs6&sign=c8b3e489ba46ba600d77a23e06a3f573`
 特征拆解：①域名前缀=appid（`1500064280`）；②路径=腾讯云 VOD 存储结构（`vodsh`+appid 内嵌）；③`f0.mp4`=视频文件档；④鉴权=腾讯云 CDN AK 防盗链（`t` 过期时间戳 / `us` / `sign`）→ **直链有时效（TTL 观察可复用 scripts_observe_ttl.py）**。**落点：S5 白名单域新增 `wxamedia.com`；B10 下载门面直链域识别新增该域。**
 
+**封面抓取（2026-10-30 用户需求确认，上游源码实锤）**：短剧媒体**有封面**，封面 URL 字段=**`coverUrl`**（上游 `plugin.qq.com.go:211-213` 从上报 payload 的 `firstMedia` 对象取：`if coverUrl, ok := firstMedia["coverUrl"].(string); ok { res.CoverUrl = coverUrl }`）。**上游只存不下载封面**（MediaInfo.CoverUrl 仅入库，无封面下载逻辑）→ **封面下载=翻写新增能力**。设计：S5 拦截 `res-downloader/wechat` 上报时，从 firstMedia 同时取 `url`(+`urlToken` 鉴权拼装)/`coverUrl`/`decodeKey`/`fileSize`/`spec`（fileFormat 列表）；封面按图片任务随视频下载（同目录 `xxx_cover.jpg`，媒体对象 mediaType==9 时整条资源为 image/.png，照此处理）。落点：S5 解析 + 下载链封面任务；验收：视频+封面双文件落盘。
+
 
 ### 6.5 二期待办（依赖序，排期 v2：与一期两轨并行 + 汇合点收口，2026-10-29 用户拍板）
 
