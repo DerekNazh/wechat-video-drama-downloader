@@ -1,6 +1,7 @@
 # 翻写规格：wx_channels_download → wechat-downloader 自研（微信视频号域）
 
 > 状态：**v0.18 B1-B11 全部执行级 · 2026-10-29（v0.15 补 B11 浏览器注入桥；v0.16 投放方式改进程级代理；v0.17 定主方案=WebView2 单实例代理；v0.18 最小测试 PASS 落档——单实例 --proxy-server 实测可行 22 条请求全走代理/系统代理未动，微信代理独立性查证：上游依赖微信'使用系统代理'设置，本方案独立不受微信配置影响，理论 100% 确认）**
+> **v0.42 短剧集数/封面/剧名源码级定稿（2026-10-30）**：KillWxapkg 反编译实锤绿泡泡=腾讯官方短剧（宿主 wx404dde55fb12df78+插件 wx94a6522b1d640c3b），业务接口全走 `wx.operateWXData('webapi_wxahotdrama')` 官方管道→**PC 端业务接口最终判定不可得**（框架内置宿主特权、无 URL、不进代理；6.4.1 旧「剧集列表接口可拦」表述修正）；集数主源定稿=上报 dramaId 分组+同组直链按抓取顺序（mediaList 按 serialNo 连播=顺序即集序），增强=UI 逐集点播，候选=fileid 前缀数值序（样本单调待连播验证）；封面双字段 mediaCoverUrl(每集)+WxaDramaCoverImage(剧目)；剧名=UI 截图 OCR（流量层无剧名）。详见 §6.4.2。
 > **v0.19 全局语言/排期决策（2026-10-29 用户拍板）**：①全仓 Python 单语言——产品代码永远 Python，Go 只留 research/ 当参考源，禁止双栈（用户明确否决"全仓 Go"与"Go域+HTTP混合"：前者需重写几十万行现有 Python 产品=天价，后者永久双运行时/进程管理/双打包）；②短剧（res-downloader，Apache 2.0 可商用）**二期翻写**（理由：黑盒系统代理体验差，翻写=拔系统代理+纯 Python 集成；基座用 mitmproxy 比逐行翻 proxy.go 省力）——短剧源码已 clone 到 research/res-downloader/（core/ 2847 行 Go，23 文件，plugins 仅 default+qq.com）；③代理统一 WebView2 单实例（B11 已定），系统代理全部淘汰；④一期=微信视频号 B1-B11（替代 wx_video_download.exe），二期=短剧翻写（替代 res_download.exe）。
 > 目的：把 `research/wx_channels_download`（MIT+Commons Clause，禁 Sell）微信视频号核心逻辑**按块翻写为自有代码**（参考逻辑、不复制源码），**落 wechat-downloader 分支**（活跃开发的商业化产品线，含 res_download.exe/wx_video_download.exe 依赖）——**目标：用 Python 自研实现替代 exe 依赖，达成可商业化自研版**。
 > 合规铁律：只读参考**逻辑/算法/协议**，禁止整文件复制进主代码；翻写按"表达独立性纪律"（见 §四）自研实现，**许可证义务随衍生作品，Commons Clause 禁 Sell 需商业授权豁免（详见 §6.8）**。
@@ -864,6 +865,18 @@ wx_channels_download（微信视频号域）
 **集数分辨设计（2026-10-30 用户提问固化，10-31 修正主源）**：**单条裸 URL 无法分辨第几集**（无集数字段；appid=资源桶 ID 非序数；fileid/hash 随机）。**集数信息源=小程序剧集列表/页面数据接口**（小程序内部 wx.request，剧集列表多为 GET；`res-downloader/wechat` 上报为 POST——两类 S5 均可拦，**白名单域需含小程序 API 域，非仅视频 CDN**）。**主源**：S5 拦截剧集列表/页面数据请求 → 解析"第X集→视频直链"映射；**兜底**：上报 payload `description`/标题正则解析"第X集"；**退化**：均无集数时按播放抓取顺序排序。**待实测点（S3 真机联调）**：抓①剧集列表请求样本（URL+响应体）②上报 payload，确认集数映射字段。
 
 **封面抓取（2026-10-30 用户需求确认，上游源码实锤）**：短剧媒体**有封面**，封面 URL 字段=**`coverUrl`**（上游 `plugin.qq.com.go:211-213` 从上报 payload 的 `firstMedia` 对象取：`if coverUrl, ok := firstMedia["coverUrl"].(string); ok { res.CoverUrl = coverUrl }`）。**上游只存不下载封面**（MediaInfo.CoverUrl 仅入库，无封面下载逻辑）→ **封面下载=翻写新增能力**。设计：S5 拦截 `res-downloader/wechat` 上报时，从 firstMedia 同时取 `url`(+`urlToken` 鉴权拼装)/`coverUrl`/`decodeKey`/`fileSize`/`spec`（fileFormat 列表）；封面按图片任务随视频下载（同目录 `xxx_cover.jpg`，媒体对象 mediaType==9 时整条资源为 image/.png，照此处理）。落点：S5 解析 + 下载链封面任务；验收：视频+封面双文件落盘。
+
+### 6.4.2 反编译源码级定稿（v0.42，2026-10-30：集数主源+封面双字段+剧名抓取通道）
+
+> **来源**：KillWxapkg v2.4.1（ghfast.top 镜像 37.7MB）解包实测——宿主 `wx404dde55fb12df78\110\__APP__.wxapkg`（3.4MB）+ 短剧插件 `wx94a6522b1d640c3b\209\__PLUGINCODE__.wxapkg`（976KB）均解包成功（产物 `D:\setup_temp\killwx_test\out_host110\`、`out_plugin209\`；宿主业务主代码伪装于 `@babel\runtime\helpers\Arrayincludes.js` 1.77MB，另有 `utils\biz-request.js`、`utils\operate-wx-data.js`）。**架构实锤**：绿泡泡=宿主 `wx404dde55fb12df78` + 短剧插件 `wx94a6522b1d640c3b`；播放页=`__plugin__/wx94a6522b1d640c3b/pages/playlet/playlet.html?dramaId=&srcAppid=`；首页=pages/index/index.html、列表=pages/feeds/feeds.html。
+
+**① 集数业务接口=官方管道，PC 端最终判定不可得（源码级实锤，修正 6.4.1「待实测」表述）**：绿泡泡全部业务接口经 **`wx.operateWXData({apiName:'webapi_wxahotdrama', reqData})`** 调用（`utils\operate-wx-data.js`），服务端=`mmbizwxahotdramasvr`——**微信基础库内置宿主特权管道，框架内直连，无 URL、不进 wx.request 网络栈、不进本地代理**。实测四层不可得=①代理层（v2 全量 JSON 落盘仍无业务接口，仅资源+上报）②框架层（WeChatAppEx 证书内置直连 443，不走代理）③数据层（插件包/缓存加密，mmkv 加密）④工具层（官方 API 需 CP access_token，社区无公开模拟）。**含义：6.4.1「剧集列表/页面数据接口=信息源」修正为「PC 端不可得，唯一活路=S3 手机真机验证 operateWXData 在安卓微信是否走普通 HTTPS 可被抓（未实测，远期项）」**。
+
+**源码接口面清单（对照字段，供 S5/真机验证用）**：`getdramainfo`（参数 srcAppid/dramaId/platform/sdkVersion/mediaNo/scene/forceJumpFlag/mpAutoAd → 返回剧集列表，每集 **serialNo**/episode_index/**mediaNo**/**mediaCoverUrl**（每集封面）/**playUrl**（加密串）/isCanPlay/isFree/isSerial/isAd/allEpisodesStatus/unLockEpisodes + **dramaName**）；`postcgiforward_directgetplayurl`（data srcAppid/dramaId/**startSerialNo/endSerialNo**/needStraight → 按集号范围直取播放链接）；`getdramaplayurl`（加密串）；`postcgiforward_getunlockresult`（解锁集序）；前端解密 `decryptAndSetMediaLink`（播放直链=服务端加密、前端解密后播）。上报端点=`sh.servicewechat.com/ob/sdkmonitor` + `report-online.sh.wxgateway.com/SdkReport`（body base64，含 dramaId/页面流转，**无 serialNo**）。
+
+**② 集数主源定稿（v0.42）**：**上报解析 dramaId 分组 + 同组直链按抓取顺序=集序**（源码级成立：前端 mediaList 按 serialNo 顺序播放，连播天然有序=逐集观看时直链顺序精确=集号）。**增强=UI 自动化逐集点播**（cu 平面控制微信窗口点集号+代理同期抓=集号+直链精确映射，集号来自 UI 展示，不受跳看/预加载影响，可落地）；**候选=fileid 前缀数值序判定**（同剧 1500055916 三样本前缀 hex 单调：`129ec102`<`b6190ae5`<`c3936044`，结构=8 位 hex 前缀+`50018348`批次共享段+尾数；疑点=样本少+集号标注不可靠，定论需一次连播/逐集点 5-10 集对照，预加载乱序问题的破解依赖此验证）；**远期=S3 手机真机验证 + 渲染层 DevTools 远程调试端口探测（未实测）**。**剧名抓取通道=UI 层**：dramaName 字段源码实锤（getdramainfo 返回、playlet URL 带 `&dramaName=`），但**流量层无剧名**（直链 URL 仅 appid/fileid/t/us/sign；封面 CDN=`wxaintpcos.wxqcloud.qq.com.cn/public/<wxappid>/WxaDramaCoverImage/<hash>.jpg`，hash 文件名无剧名）→ 剧名=打开剧详情页 UI 截图 OCR/读渲染层文本，一次抓取（与集号同款思路，界面必显示标题）。
+
+**③ 封面双字段落档（v0.42 修正 6.4.1 单 coverUrl）**：`mediaCoverUrl`=每集封面（小程序源码字段，getdramainfo 每集对象）；`WxaDramaCoverImage`=剧目封面（代理实测 CDN 路径段，wxappid=剧目级，已见 9 个 wxappid 独立剧目）→ 下载时按「每集 mediaCoverUrl 优先，缺失回退剧目封面 WxaDramaCoverImage」落 `xxx_cover.jpg`。**验收更新（对应 S5/B10）**：视频+封面双文件落盘，封面优先每集字段。
 
 
 ### 6.5 二期待办（依赖序，排期 v2：与一期两轨并行 + 汇合点收口，2026-10-29 用户拍板）
