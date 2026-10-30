@@ -840,8 +840,13 @@ wx_channels_download（微信视频号域）
 | `res.wx.qq.com`（后缀） | `web/web-finder/res/js/virtual_svg-icons-register.publish` | 注入点（篡改 JS 加钩子） |
 | `qq.com`（包含） | `/res-downloader/wechat`（`type=1`/`type=2`） | 上报端点 |
 | `mp.weixin.qq.com`（Origin 头） | — | 排除条件（非视频号来源不嗅） |
+| **`.vodpreview.wxamedia.com`**（后缀，**2026-10-30 实测新增**） | `/<hash>vodsh<appid>/<fileid>/f0.mp4`；鉴权=`t`(hex 时间戳)+`us`+`sign` | **短剧直链 CDN（嗅探目标）** |
 
-**⚠️ 待确认项（2026-10-29 用户挂起，明天实测后补充）**：**"微信小程序短剧"是否走同一套 qq.com 链路，上游无单独标注**——用户将实测确认短剧真实 URL 特征；若命中上表则零额外工作，若走其他 CDN 域名则补一条特征。**在用户确认前，S4 注入规则不写死短剧专属特征，仅按上表通用特征实现。**
+**✅ 待确认项已实测确认（2026-10-30 用户真机实测）**：**微信小程序短剧不走 qq.com 链路**，直链走独立的 **wxamedia.com**（腾讯微信媒体 CDN）——已补专属特征（上表末行）。**S4 注入规则仍按上表 qq.com 通用特征**（上报端点 `wxapp.tc.qq.com/res-downloader/wechat` 走 qq.com）；**S5 直链下载/解密识别需新增 wxamedia.com 域**。
+
+**短剧直链实测样例（2026-10-30 用户真机）**：
+`https://1500064280.vodpreview.wxamedia.com:443/cbf9b5a3vodsh1500064280/d283d4865001834825306789435/f0.mp4?t=6ae42f81&us=6ae41361458a5b5d02cdad2cs6&sign=c8b3e489ba46ba600d77a23e06a3f573`
+特征拆解：①域名前缀=appid（`1500064280`）；②路径=腾讯云 VOD 存储结构（`vodsh`+appid 内嵌）；③`f0.mp4`=视频文件档；④鉴权=腾讯云 CDN AK 防盗链（`t` 过期时间戳 / `us` / `sign`）→ **直链有时效（TTL 观察可复用 scripts_observe_ttl.py）**。**落点：S5 白名单域新增 `wxamedia.com`；B10 下载门面直链域识别新增该域。**
 
 
 ### 6.5 二期待办（依赖序，排期 v2：与一期两轨并行 + 汇合点收口，2026-10-29 用户拍板）
