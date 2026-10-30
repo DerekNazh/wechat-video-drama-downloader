@@ -848,6 +848,19 @@ wx_channels_download（微信视频号域）
 `https://1500064280.vodpreview.wxamedia.com:443/cbf9b5a3vodsh1500064280/d283d4865001834825306789435/f0.mp4?t=6ae42f81&us=6ae41361458a5b5d02cdad2cs6&sign=c8b3e489ba46ba600d77a23e06a3f573`
 特征拆解：①域名前缀=appid（`1500064280`）；②路径=腾讯云 VOD 存储结构（`vodsh`+appid 内嵌）；③`f0.mp4`=视频文件档；④鉴权=腾讯云 CDN AK 防盗链（`t` 过期时间戳 / `us` / `sign`）→ **直链有时效（TTL 观察可复用 scripts_observe_ttl.py）**。**落点：S5 白名单域新增 `wxamedia.com`；B10 下载门面直链域识别新增该域。**
 
+**跨集差异对比（2026-10-30 用户实测两集，同剧第一集 vs 第二集）**：
+
+| 字段 | 第一集 | 第二集 | 结论 |
+|---|---|---|---|
+| 域名前缀 appid | `1500064280` | `1500055916` | **按集分配，非按商户** |
+| 路径 hash | `cbf9b5a3` | `cbe84669` | 按视频变 |
+| fileid | d283d4865001834825306789435 | b6190ae55001834816036676925 | 按视频变 |
+| 档名 | `f0.mp4` | `f0.mp4` | **恒定** |
+| t / us | 6ae42f81 / ...cs6 | 6ae42ff5 / ...as6 | **同会话相近**（一次观看批量签发） |
+| sign | 各自不同 | 各自不同 | 每请求变 |
+
+**核心结论：集数不在直链 URL 显式表示**（无 episode/集数字段）——区分不同集=appid+hash+fileid 整体；**集数/标题信息只能从上报 payload 取**（上游 `result["description"]`，plugin.qq.com.go:219-221）→ **S5 解析设计点：文件命名带集数=解析 payload description/标题，直链 URL 给不了**。
+
 **封面抓取（2026-10-30 用户需求确认，上游源码实锤）**：短剧媒体**有封面**，封面 URL 字段=**`coverUrl`**（上游 `plugin.qq.com.go:211-213` 从上报 payload 的 `firstMedia` 对象取：`if coverUrl, ok := firstMedia["coverUrl"].(string); ok { res.CoverUrl = coverUrl }`）。**上游只存不下载封面**（MediaInfo.CoverUrl 仅入库，无封面下载逻辑）→ **封面下载=翻写新增能力**。设计：S5 拦截 `res-downloader/wechat` 上报时，从 firstMedia 同时取 `url`(+`urlToken` 鉴权拼装)/`coverUrl`/`decodeKey`/`fileSize`/`spec`（fileFormat 列表）；封面按图片任务随视频下载（同目录 `xxx_cover.jpg`，媒体对象 mediaType==9 时整条资源为 image/.png，照此处理）。落点：S5 解析 + 下载链封面任务；验收：视频+封面双文件落盘。
 
 
