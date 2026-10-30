@@ -861,7 +861,7 @@ wx_channels_download（微信视频号域）
 
 **核心结论：集数不在直链 URL 显式表示**（无 episode/集数字段）——区分不同集=appid+hash+fileid 整体；**集数/标题信息只能从上报 payload 取**（上游 `result["description"]`，plugin.qq.com.go:219-221）→ **S5 解析设计点：文件命名带集数=解析 payload description/标题，直链 URL 给不了**。
 
-**集数分辨设计（2026-10-30 用户提问固化）**：**单条裸 URL 无法分辨第几集**（无集数字段；appid=资源桶 ID 非序数；fileid/hash 随机）。实际分辨通道=S5 拦截 `res-downloader/wechat` 上报 payload → 取 `description`/标题 → 正则解析"第X集"（行业惯例标题带集数）→ 文件名/展示带集数。**退化方案**：标题不带集数时按播放抓取顺序排序（一次会话按观看序抓取，下载列表按抓取序）。**待实测点（S3 真机联调）**：抓一条真实上报 payload 确认 description 是否带"第X集"。
+**集数分辨设计（2026-10-30 用户提问固化，10-31 修正主源）**：**单条裸 URL 无法分辨第几集**（无集数字段；appid=资源桶 ID 非序数；fileid/hash 随机）。**集数信息源=小程序剧集列表/页面数据接口**（小程序内部 wx.request，剧集列表多为 GET；`res-downloader/wechat` 上报为 POST——两类 S5 均可拦，**白名单域需含小程序 API 域，非仅视频 CDN**）。**主源**：S5 拦截剧集列表/页面数据请求 → 解析"第X集→视频直链"映射；**兜底**：上报 payload `description`/标题正则解析"第X集"；**退化**：均无集数时按播放抓取顺序排序。**待实测点（S3 真机联调）**：抓①剧集列表请求样本（URL+响应体）②上报 payload，确认集数映射字段。
 
 **封面抓取（2026-10-30 用户需求确认，上游源码实锤）**：短剧媒体**有封面**，封面 URL 字段=**`coverUrl`**（上游 `plugin.qq.com.go:211-213` 从上报 payload 的 `firstMedia` 对象取：`if coverUrl, ok := firstMedia["coverUrl"].(string); ok { res.CoverUrl = coverUrl }`）。**上游只存不下载封面**（MediaInfo.CoverUrl 仅入库，无封面下载逻辑）→ **封面下载=翻写新增能力**。设计：S5 拦截 `res-downloader/wechat` 上报时，从 firstMedia 同时取 `url`(+`urlToken` 鉴权拼装)/`coverUrl`/`decodeKey`/`fileSize`/`spec`（fileFormat 列表）；封面按图片任务随视频下载（同目录 `xxx_cover.jpg`，媒体对象 mediaType==9 时整条资源为 image/.png，照此处理）。落点：S5 解析 + 下载链封面任务；验收：视频+封面双文件落盘。
 
